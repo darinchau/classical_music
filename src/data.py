@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os
-
+import heapq
 import librosa
 import logging
 import matplotlib.pyplot as plt
@@ -441,6 +441,21 @@ def midi_to_notes(midi_path: str, time_agnostic: bool = False) -> list[Note]:
     assert all(note.time_agnostic == time_agnostic for note in notes)
     return notes
 
+def score_to_audio(score: m21.stream.Score, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
+    """Inner helper function to convert a music21 score to audio. The score will be consumed."""
+    with (
+        tempfile.NamedTemporaryFile(suffix=".mid") as f1,
+        tempfile.NamedTemporaryFile(suffix=".wav") as f2
+    ):
+        file = streamToMidiFile(score, addStartDelay=True)
+        file.open(f1.name, "wb")
+        try:
+            file.write()
+        finally:
+            file.close()
+        _convert_midi_to_wav(f1.name, f2.name, soundfont_path, sample_rate)
+        return Audio.load(f2.name)
+
 def midi_to_audio(midi_path: str, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
     """Converts MIDI to audio. This function retains instrument information. To make everything into piano, use midi_to_notes and then notes_to_audio"""
     assert is_package_installed("fluidsynth"), "You need to install fluidsynth to convert midi to audio, refer to README for more details"
@@ -452,17 +467,57 @@ def midi_to_audio(midi_path: str, sample_rate: int = 44100, soundfont_path: str 
     for n in stream.recurse().getElementsByClass((m21.note.Note, m21.chord.Chord, m21.dynamics.Dynamic)):
         if isinstance(n, (m21.note.Note, m21.chord.Chord)):
             n.volume = 0.5
-        elif isinstance(n, m21.dynamics.Dynamic) and n.activeSite is not None:
-            n.activeSite.remove(n)
-    with (
-        tempfile.NamedTemporaryFile(suffix=".mid") as f1,
-        tempfile.NamedTemporaryFile(suffix=".wav") as f2
-    ):
-        file = streamToMidiFile(stream, addStartDelay=True)
-        file.open(f1.name, "wb")
-        try:
-            file.write()
-        finally:
-            file.close()
-        _convert_midi_to_wav(f1.name, f2.name, soundfont_path, sample_rate)
-        return Audio.load(f2.name)
+        # This code fixes some weird dynamic problem in some edge cases but makes most music a little worse.
+        # See if this is needed in the future
+        # elif isinstance(n, m21.dynamics.Dynamic) and n.activeSite is not None:
+        #     n.activeSite.remove(n)
+    return score_to_audio(stream, sample_rate, soundfont_path)
+
+def notes_to_score(notes: list[Note]) -> m21.stream.Score:
+    """Convert a list of notes to a music21 score. The score is only intended to be played and not for further analysis."""
+    assert all(note.time_agnostic for note in notes), "All notes must be time agnostic"
+    if not _MUSIC21_SETUP:
+        _setup()
+
+    score = m21.stream.Score()
+
+    notes = sorted(notes, key=lambda x: x.offset)
+    heap = []
+
+    # This dictionary will store the clef assignments (clef number -> list of events)
+    assignments: dict[int, list[Note]] = {}
+    clef_ctr = 0
+
+    # Iterate through the sorted list of events
+    for note in notes:
+        end = note.offset + note.duration
+        if heap and heap[0][0] <= note.offset:
+            _, clef_to_use = heapq.heappop(heap)
+        else:
+            clef_to_use = clef_ctr
+            clef_ctr += 1
+
+        if clef_to_use in assignments:
+            assignments[clef_to_use].append(note)
+        else:
+            assignments[clef_to_use] = [note]
+        heapq.heappush(heap, (end, clef_to_use))
+
+    measures = [m21.stream.Measure() for _ in range(len(assignments))]
+    parts = [m21.stream.Part() for _ in range(len(assignments))]
+    for i, (measure, part) in enumerate(zip(measures, parts)):
+        for note in assignments[i]:
+            m21note = m21.note.Note(
+                note.note_name,
+                quarterLength=note.duration
+            )
+            measure.append(m21note)
+        part.append(measure)
+        score.append(part)
+        part.makeRests(inPlace=True, fillGaps=True)
+    return score
+
+def notes_to_audio(notes: list[Note], sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
+    """Converts a list of notes to audio. This function will convert the notes to a midi file and then to audio."""
+    score = notes_to_score(notes)
+    return score_to_audio(score, sample_rate, soundfont_path)
