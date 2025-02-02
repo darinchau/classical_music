@@ -299,6 +299,11 @@ class Note:
         return self.pitch_number + 12 * self.octave + 12
 
     @property
+    def chromatic_number(self):
+        """The chromatic number of the note. A0 is 0, A#0 is 1, B0 is 2, C1 is 3, etc."""
+        return self.midi_number - PIANO_A0
+
+    @property
     def step_number(self):
         """The step number of the note. A0 is 0, Middle C is 23 and in/decreases by 1 for each step."""
         return 7 * self.octave + self.step_number - 5
@@ -364,6 +369,28 @@ class Note:
         if isinstance(other, int):
             return self.midi_number < other
         return self.midi_number < other.midi_number
+
+
+class PianoRoll:
+    """A piano roll is defined as a 2D matrix (T, 90) where T is the number of time steps and 88 piano keys + 2 pedals is the feature vectors.
+    The roll r[i, j] represents the strength of the jth piano key being pressed at time i.
+    By convention, 0-88 is the piano keys, r[:, 88] is the sustain pedal, and r[:, 89] is the soft pedal.
+    """
+    def __init__(self, pianoroll: NDArray[np.float32], resolution: int = 24, time_agnostic: bool = False):
+        assert np.all(pianoroll >= 0) and np.all(pianoroll <= 1), "Pianoroll must be between 0 and 1"
+        assert pianoroll.shape[1] == 90, "Pianoroll must have 90 features"
+        assert resolution > 0, "Resolution must be greater than 0"
+        self._pianoroll = pianoroll
+        self._resolution = resolution
+        self._time_agnostic = time_agnostic
+
+    @property
+    def resolution(self) -> int:
+        return self._resolution
+
+    @staticmethod
+    def new_pianoroll(nframes: int) -> NDArray:
+        return np.zeros((nframes, 90), dtype=np.float32)
 
 def step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], alter: int) -> int:
     return {"C": 0, "D": 2, "E": 4, "F": -1, "G": 1, "A": 3, "B": 5}[step] + 7 * alter
@@ -532,3 +559,18 @@ def notes_to_audio(notes: list[Note], sample_rate: int = 44100, soundfont_path: 
     """Converts a list of notes to audio. This function will convert the notes to a midi file and then to audio."""
     score = notes_to_score(notes)
     return score_to_audio(score, sample_rate, soundfont_path)
+
+def notes_to_pianoroll(notes: list[Note], resolution: int) -> NDArray[np.float32]:
+    """Converts a list of notes to a pianoroll. A time agnostic list of notes will be converted to a time agnostic pianoroll and vice versa."""
+    if not notes:
+        raise NotImplementedError("Cannot convert an empty list of notes to a pianoroll")
+    assert all(note.time_agnostic == notes[0].time_agnostic for note in notes), "All notes must have the same time agnostic property"
+    # We don't need this to be fast :)
+    max_duration = max(note.offset + note.duration for note in notes)
+    max_duration = int(max_duration * resolution) + 1
+    pianoroll = PianoRoll.new_pianoroll(max_duration)
+    for note in notes:
+        start = int(note.offset * resolution)
+        end = int((note.offset + note.duration) * resolution)
+        pianoroll[start:end, note.chromatic_number] = note.velocity / 127
+    return pianoroll
