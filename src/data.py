@@ -246,7 +246,8 @@ class Note:
     octave: int
     duration: float
     offset: float
-    time_agnostic: bool = False
+    time_agnostic: bool
+    velocity: int
 
     def __post_init__(self):
         # Sanity Check
@@ -255,7 +256,7 @@ class Note:
         assert self.offset >= 0, f"Offset must be greater than or equal to 0, but found {self.offset}"
 
     def __repr__(self):
-        return f"PianoNote({self.note_name}{self.octave})"
+        return f"Note({self.note_name}{self.octave}, duration={self.duration}, offset={self.offset}, time_agnostic={self.time_agnostic}, velocity={self.velocity})"
 
     @property
     def pitch_name(self) -> str:
@@ -303,7 +304,7 @@ class Note:
         return 7 * self.octave + self.step_number - 5
 
     @classmethod
-    def from_str(cls, note: str, time_agnostic: bool = False) -> Note:
+    def from_str(cls, note: str, time_agnostic: bool = False, velocity: int = 64) -> Note:
         """Creates a Note from a string note.
 
         Example: A4[0, 1] is A in the 4th octave with a duration of 0 and offset of 1."""
@@ -321,11 +322,12 @@ class Note:
             octave=int(octave),
             duration=duration,
             offset=offset,
-            time_agnostic=time_agnostic
+            time_agnostic=time_agnostic,
+            velocity=velocity
         )
 
     @classmethod
-    def from_note(cls, note: m21.note.Note, time_agnostic: bool = False) -> Note:
+    def from_note(cls, note: m21.note.Note, time_agnostic: bool = False, velocity: int = 64) -> Note:
         """Creates a Note from a music21 note."""
         alter = note.pitch.alter
         assert alter == int(alter), f"Alter must be an integer, but found {alter}"
@@ -336,24 +338,26 @@ class Note:
         # If this note does not come from an active site, then the offset is (conveniently) 0
         offset = note.offset
         return cls(
-            step_alter_to_lof_index(step, int(alter)),
-            octave,
-            float(duration),
-            float(offset),
-            time_agnostic
+            index=step_alter_to_lof_index(step, int(alter)),
+            octave=octave,
+            duration=float(duration),
+            offset=float(offset),
+            time_agnostic=time_agnostic,
+            velocity=velocity
         )
 
     @classmethod
-    def from_midi_number(cls, midi_number: int, duration: float = 0., offset: float = 0., time_agnostic: bool = False) -> Note:
+    def from_midi_number(cls, midi_number: int, duration: float = 0., offset: float = 0., time_agnostic: bool = False, velocity: int = 64) -> Note:
         """Creates a Note from a MIDI number. A4 maps to 69. If accidentals are needed, assumes the note is sharp."""
         octave = (midi_number // 12) - 1
         pitch = [0, 7, 2, 9, 4, -1, 6, 1, 8, 3, 10, 5][midi_number % 12]
         return cls(
-            pitch,
-            octave,
-            duration,
-            offset,
-            time_agnostic
+            index=pitch,
+            octave=octave,
+            duration=duration,
+            offset=offset,
+            time_agnostic=time_agnostic,
+            velocity=velocity
         )
 
     def __lt__(self, other: Note | int) -> bool:
@@ -365,6 +369,7 @@ def step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], al
     return {"C": 0, "D": 2, "E": 4, "F": -1, "G": 1, "A": 3, "B": 5}[step] + 7 * alter
 
 def _convert_midi_to_wav(input_path: str, output_path: str, soundfont_path="~/.fluidsynth/default_sound_font.sf2", sample_rate=44100, verbose=False):
+    assert is_package_installed("fluidsynth"), "You need to install fluidsynth to convert midi to audio, refer to README for more details"
     subprocess.call(['fluidsynth', '-ni', soundfont_path, input_path, '-F', output_path, '-r', str(sample_rate)],
         stdout=subprocess.DEVNULL if not verbose else None,
         stderr=subprocess.DEVNULL if not verbose else None)
@@ -427,16 +432,19 @@ def midi_to_notes(midi_path: str, time_agnostic: bool = False) -> list[Note]:
 
         for track in mid.tracks:
             for msg in track:
+                # Convert the delta time in ticks to seconds and update current time
                 current_time += mido.tick2second(msg.time, ticks_per_beat, tempo)
 
                 if msg.type == 'set_tempo':
                     tempo = msg.tempo
                 elif msg.type == 'note_on' and msg.velocity > 0:
+                    # Store the start time and velocity when a note_on message is encountered
                     note_on_dict[msg.note] = (current_time, msg.velocity)
                 elif (msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0)) and msg.note in note_on_dict:
-                    start_time, _ = note_on_dict.pop(msg.note)
+                    # Calculate note duration and create a Note object when the note is released
+                    start_time, velocity = note_on_dict.pop(msg.note)
                     duration = current_time - start_time
-                    note = Note.from_midi_number(midi_number=msg.note, duration=duration, offset=start_time, time_agnostic=False)
+                    note = Note.from_midi_number(midi_number=msg.note, duration=duration, offset=start_time, velocity=velocity, time_agnostic=False)
                     notes.append(note)
     assert all(note.time_agnostic == time_agnostic for note in notes)
     return notes
@@ -458,20 +466,22 @@ def score_to_audio(score: m21.stream.Score, sample_rate: int = 44100, soundfont_
 
 def midi_to_audio(midi_path: str, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
     """Converts MIDI to audio. This function retains instrument information. To make everything into piano, use midi_to_notes and then notes_to_audio"""
-    assert is_package_installed("fluidsynth"), "You need to install fluidsynth to convert midi to audio, refer to README for more details"
-    if not _MUSIC21_SETUP:
-        _setup()
-    stream = m21.converter.parse(midi_path)
-    if not isinstance(stream, m21.stream.Score):
-        raise ValueError(f"Midi file must contain a score, found {type(stream)}")
-    for n in stream.recurse().getElementsByClass((m21.note.Note, m21.chord.Chord, m21.dynamics.Dynamic)):
-        if isinstance(n, (m21.note.Note, m21.chord.Chord)):
-            n.volume = 0.5
-        # This code fixes some weird dynamic problem in some edge cases but makes most music a little worse.
-        # See if this is needed in the future
-        # elif isinstance(n, m21.dynamics.Dynamic) and n.activeSite is not None:
-        #     n.activeSite.remove(n)
-    return score_to_audio(stream, sample_rate, soundfont_path)
+    # This code fixes some weird dynamic problem in some edge cases but makes most music a little worse.
+    # See if this is needed in the future
+    # if not _MUSIC21_SETUP:
+    #     _setup()
+    # stream = m21.converter.parse(midi_path)
+    # if not isinstance(stream, m21.stream.Score):
+    #     raise ValueError(f"Midi file must contain a score, found {type(stream)}")
+    # for n in stream.recurse().getElementsByClass((m21.note.Note, m21.chord.Chord, m21.dynamics.Dynamic)):
+    #     if isinstance(n, (m21.note.Note, m21.chord.Chord)):
+    #         n.volume = 0.5
+    #     elif isinstance(n, m21.dynamics.Dynamic) and n.activeSite is not None:
+    #         n.activeSite.remove(n)
+    # return score_to_audio(stream, sample_rate, soundfont_path)
+    with tempfile.NamedTemporaryFile(suffix=".wav") as f:
+        _convert_midi_to_wav(midi_path, f.name, soundfont_path, sample_rate)
+        return Audio.load(f.name)
 
 def notes_to_score(notes: list[Note]) -> m21.stream.Score:
     """Convert a list of notes to a music21 score. The score is only intended to be played and not for further analysis."""
@@ -511,6 +521,7 @@ def notes_to_score(notes: list[Note]) -> m21.stream.Score:
                 note.note_name,
                 quarterLength=note.duration
             )
+            m21note.volume.velocity = note.velocity
             measure.append(m21note)
         part.append(measure)
         score.append(part)
