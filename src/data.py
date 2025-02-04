@@ -31,6 +31,9 @@ PIANO_A0 = 21
 PIANO_C8 = 108
 _MUSIC21_SETUP = False
 
+class NotSupportedOnWindows(NotImplementedError):
+    pass
+
 def _get_sounddevice():
     try:
         import sounddevice as sd
@@ -43,6 +46,10 @@ def _setup():
     global _MUSIC21_SETUP
     if _MUSIC21_SETUP:
         return
+
+    # Raise a warning if in windows
+    if os.name == "nt":
+        raise NotSupportedOnWindows("Music21 is not fully supported in Windows. Please use Linux or MacOS for better compatibility")
 
     us = environment.UserSettings()
     us['musescoreDirectPNGPath'] = '/usr/bin/mscore'
@@ -234,8 +241,7 @@ class Audio:
         return f"(Audio)\nDuration:\t{self.duration:5f}\nSample Rate:\t{self.sample_rate}\nChannels:\t{self.nchannels}\nNum frames:\t{self.nframes}"
 
 
-@dataclass(frozen=True, eq=True)
-@total_ordering
+@dataclass(frozen=True)
 class Note:
     """A piano note is a representation of a note on the piano, with a note name and an octave
     The convention being middle C is C4. The lowest note is A0 and the highest note is C8.
@@ -256,11 +262,11 @@ class Note:
         assert self.offset >= 0, f"Offset must be greater than or equal to 0, but found {self.offset}"
 
     def __repr__(self):
-        return f"Note({self.note_name}{self.octave}, duration={self.duration}, offset={self.offset}, time_agnostic={self.time_agnostic}, velocity={self.velocity})"
+        return f"Note({self.note_name}, duration={self.duration}, offset={self.offset}, velocity={self.velocity})"
 
     @property
     def pitch_name(self) -> str:
-        """Returns a note name of the pitch."""
+        """Returns a note name of the pitch. e.g. A, C#, etc."""
         alter = self.alter
         if alter == 0:
             return self.step
@@ -273,7 +279,7 @@ class Note:
 
     @property
     def note_name(self):
-        """The note name of the note."""
+        """The note name of the note. e.g. A4, C#5, etc."""
         return f"{self.pitch_name}{self.octave}"
 
     @property
@@ -281,6 +287,12 @@ class Note:
         """Returns the diatonic step of the note"""
         idx = self.index % 7
         return ("C", "G", "D", "A", "E", "B", "F")[idx]
+
+    @property
+    def step_number(self) -> int:
+        """Returns the diatonic step number of the note, where C is 0, D is 1, etc."""
+        idx = self.index % 7
+        return (0, 4, 1, 5, 2, 6, 3)[idx]
 
     @property
     def alter(self):
@@ -302,11 +314,6 @@ class Note:
     def chromatic_number(self):
         """The chromatic number of the note. A0 is 0, A#0 is 1, B0 is 2, C1 is 3, etc."""
         return self.midi_number - PIANO_A0
-
-    @property
-    def step_number(self):
-        """The step number of the note. A0 is 0, Middle C is 23 and in/decreases by 1 for each step."""
-        return 7 * self.octave + self.step_number - 5
 
     @classmethod
     def from_str(cls, note: str, time_agnostic: bool = False, velocity: int = 64) -> Note:
@@ -365,12 +372,6 @@ class Note:
             velocity=velocity
         )
 
-    def __lt__(self, other: Note | int) -> bool:
-        if isinstance(other, int):
-            return self.midi_number < other
-        return self.midi_number < other.midi_number
-
-
 class PianoRoll:
     """A piano roll is defined as a 2D matrix (T, 90) where T is the number of time steps and 88 piano keys + 2 pedals is the feature vectors.
     The roll r[i, j] represents the strength of the jth piano key being pressed at time i.
@@ -383,14 +384,32 @@ class PianoRoll:
         self._pianoroll = pianoroll
         self._resolution = resolution
         self._time_agnostic = time_agnostic
+        self._pianoroll.flags.writeable = False
 
     @property
     def resolution(self) -> int:
         return self._resolution
 
     @staticmethod
-    def new_pianoroll(nframes: int) -> NDArray:
+    def new_zero_array(nframes: int) -> NDArray:
         return np.zeros((nframes, 90), dtype=np.float32)
+
+    def plot(self, **kwargs):
+        """Plots the pianoroll"""
+        from .plot import _plot_pianoroll
+        p = np.zeros((self._pianoroll.shape[0], 128), dtype=np.float32)
+        p[:, 21:109] = self._pianoroll[:, :88]
+        p[:, 0] = self._pianoroll[:, 88]
+        p[:, 127] = self._pianoroll[:, 89]
+        fig, ax = plt.subplots()
+        _plot_pianoroll(
+            ax=ax,
+            pianoroll=self._pianoroll,
+            is_drum=False,
+            resolution=self._resolution,
+            **kwargs
+        )
+        return fig
 
 def step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], alter: int) -> int:
     return {"C": 0, "D": 2, "E": 4, "F": -1, "G": 1, "A": 3, "B": 5}[step] + 7 * alter
@@ -402,6 +421,8 @@ def _convert_midi_to_wav(input_path: str, output_path: str, soundfont_path="~/.f
         stderr=subprocess.DEVNULL if not verbose else None)
 
 def is_package_installed(package_name):
+    if os.name == "nt":
+        raise NotSupportedOnWindows(f"The package ``{package_name}`` is not supported in Windows")
     try:
         result = subprocess.run(['dpkg', '-s', package_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if 'install ok installed' in result.stdout:
@@ -410,7 +431,10 @@ def is_package_installed(package_name):
         return False
     return False
 
-def midi_to_notes(midi_path: str, time_agnostic: bool = False) -> list[Note]:
+def midi_to_notes(midi_path: str, time_agnostic: bool = False, normalize: bool = False) -> list[Note]:
+    """Converts a midi file to a list of notes. If time_agnostic is True, then the notes will be timed against quarter length.
+
+    If normalize is True, then the earliest note will always have an offset of 0."""
     if time_agnostic:
         # Use music21 to convert the midi to notes
         if not _MUSIC21_SETUP:
@@ -447,17 +471,16 @@ def midi_to_notes(midi_path: str, time_agnostic: bool = False) -> list[Note]:
                     # Use some python black magic to ensure the offset is calculated correctly
                     object.__setattr__(note, "offset", offset)
                     notes.append(note)
-        notes = sorted(notes, key=lambda x: x.offset)
     else:
         mid = MidiFile(midi_path)
         tempo = 500000  # default tempo (microseconds per beat)
         ticks_per_beat = mid.ticks_per_beat
 
-        current_time = 0  # current time in seconds
-        notes = []
-        note_on_dict = {}
+        notes: list[Note] = []
 
         for track in mid.tracks:
+            current_time = 0  # current time in seconds
+            note_on_dict = {}
             for msg in track:
                 # Convert the delta time in ticks to seconds and update current time
                 current_time += mido.tick2second(msg.time, ticks_per_beat, tempo)
@@ -465,19 +488,25 @@ def midi_to_notes(midi_path: str, time_agnostic: bool = False) -> list[Note]:
                 if msg.type == 'set_tempo':
                     tempo = msg.tempo
                 elif msg.type == 'note_on' and msg.velocity > 0:
-                    # Store the start time and velocity when a note_on message is encountered
                     note_on_dict[msg.note] = (current_time, msg.velocity)
                 elif (msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0)) and msg.note in note_on_dict:
-                    # Calculate note duration and create a Note object when the note is released
                     start_time, velocity = note_on_dict.pop(msg.note)
                     duration = current_time - start_time
                     note = Note.from_midi_number(midi_number=msg.note, duration=duration, offset=start_time, velocity=velocity, time_agnostic=False)
                     notes.append(note)
     assert all(note.time_agnostic == time_agnostic for note in notes)
+    notes = sorted(notes, key=lambda x: x.offset)
+    if normalize:
+        min_offset = min(note.offset for note in notes)
+        for note in notes:
+            # Use python black magic - this is safe because the object only has reference here
+            object.__setattr__(note, "offset", note.offset - min_offset)
     return notes
 
 def score_to_audio(score: m21.stream.Score, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
     """Inner helper function to convert a music21 score to audio. The score will be consumed."""
+    if not _MUSIC21_SETUP:
+        _setup()
     with (
         tempfile.NamedTemporaryFile(suffix=".mid") as f1,
         tempfile.NamedTemporaryFile(suffix=".wav") as f2
@@ -493,19 +522,6 @@ def score_to_audio(score: m21.stream.Score, sample_rate: int = 44100, soundfont_
 
 def midi_to_audio(midi_path: str, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
     """Converts MIDI to audio. This function retains instrument information. To make everything into piano, use midi_to_notes and then notes_to_audio"""
-    # This code fixes some weird dynamic problem in some edge cases but makes most music a little worse.
-    # See if this is needed in the future
-    # if not _MUSIC21_SETUP:
-    #     _setup()
-    # stream = m21.converter.parse(midi_path)
-    # if not isinstance(stream, m21.stream.Score):
-    #     raise ValueError(f"Midi file must contain a score, found {type(stream)}")
-    # for n in stream.recurse().getElementsByClass((m21.note.Note, m21.chord.Chord, m21.dynamics.Dynamic)):
-    #     if isinstance(n, (m21.note.Note, m21.chord.Chord)):
-    #         n.volume = 0.5
-    #     elif isinstance(n, m21.dynamics.Dynamic) and n.activeSite is not None:
-    #         n.activeSite.remove(n)
-    # return score_to_audio(stream, sample_rate, soundfont_path)
     with tempfile.NamedTemporaryFile(suffix=".wav") as f:
         _convert_midi_to_wav(midi_path, f.name, soundfont_path, sample_rate)
         return Audio.load(f.name)
@@ -560,17 +576,42 @@ def notes_to_audio(notes: list[Note], sample_rate: int = 44100, soundfont_path: 
     score = notes_to_score(notes)
     return score_to_audio(score, sample_rate, soundfont_path)
 
-def notes_to_pianoroll(notes: list[Note], resolution: int) -> NDArray[np.float32]:
+def notes_to_pianoroll(notes: list[Note], resolution: int = 24, eps: float = 1e-6) -> PianoRoll:
     """Converts a list of notes to a pianoroll. A time agnostic list of notes will be converted to a time agnostic pianoroll and vice versa."""
     if not notes:
-        raise NotImplementedError("Cannot convert an empty list of notes to a pianoroll")
+        raise ValueError("Cannot convert an empty list of notes to a pianoroll")
     assert all(note.time_agnostic == notes[0].time_agnostic for note in notes), "All notes must have the same time agnostic property"
-    # We don't need this to be fast :)
+
     max_duration = max(note.offset + note.duration for note in notes)
     max_duration = int(max_duration * resolution) + 1
-    pianoroll = PianoRoll.new_pianoroll(max_duration)
+    pianoroll = PianoRoll.new_zero_array(max_duration)
+    notes_dict: dict[int, list[tuple[int, int, int]]] = {}
     for note in notes:
         start = int(note.offset * resolution)
         end = int((note.offset + note.duration) * resolution)
-        pianoroll[start:end, note.chromatic_number] = note.velocity / 127
-    return pianoroll
+        if start == end and note.duration > 0:
+            required_resolution = int(1 / note.duration)
+            raise ValueError(f"Unable to resolve piano roll - try increase the resolution to at least {required_resolution}")
+        if note.midi_number not in notes_dict:
+            notes_dict[note.midi_number] = []
+        notes_dict[note.midi_number].append((start, end, note.velocity))
+
+    # Check for overlap first, then assign the notes
+    for k, ns in notes_dict.items():
+        ns = sorted(ns, key=lambda x: x[0])
+        for i in range(len(ns) - 1):
+            if ns[i][1] < ns[i + 1][0]:
+                # Case 1: No overlap
+                pianoroll[ns[i][0]:ns[i][1], k - PIANO_A0] = ns[i][2] / 127
+            elif abs(ns[i][1] - ns[i + 1][0]) < eps:
+                # Case 2: End of note is start of next note - try minus one on end of this note
+                if ns[i][1] == ns[i][0] + 1:
+                    raise ValueError("Unable to resolve piano roll - try increase the resolution")
+                pianoroll[ns[i][0]:ns[i][1] - 1, k - PIANO_A0] = ns[i][2] / 127
+            else:
+                # Case 3: Overlap
+                # Use the union of two intervals and the larger velocity
+                pianoroll[min(ns[i][0], ns[i + 1][0]):max(ns[i][1], ns[i + 1][1]), k - PIANO_A0] = max(ns[i][2], ns[i + 1][2]) / 127
+        pianoroll[ns[-1][0]:ns[-1][1], k - PIANO_A0] = ns[-1][2] / 127
+
+    return PianoRoll(pianoroll, resolution, notes[0].time_agnostic)
