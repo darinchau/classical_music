@@ -7,8 +7,7 @@ def sign(x):
 
 # Names and ranges
 KEY_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
-KEY_NAMES_SHARP = ['C', 'C#', 'D', 'D#', 'E',
-                   'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+KEY_NAMES_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 SHARPS_IDX = [1, 3, 6, 8, 10]
 
 BASS_RANGE = list(range(40, 65))
