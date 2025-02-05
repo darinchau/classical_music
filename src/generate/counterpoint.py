@@ -1,113 +1,270 @@
+from __future__ import annotations
 import itertools
 import math
 import random as rm
 import time
-from . import music as m
+from ..data import PIANO_A0, PIANO_C8, Note
 from .constants import *
 from .constraints import Constraints
 
+INFINITY = 1 << 64 - 1  # A big number for the search algorithm
 
-class CantusFirmus(m.Melody):
+
+def _make_note(pitch: int | str) -> Note:
+    if isinstance(pitch, int):
+        return Note.from_midi_number(pitch)
+    elif isinstance(pitch, str):
+        return Note.from_str(pitch)
+    else:
+        raise ValueError("Invalid pitch type")
+
+
+class Scale:
+    """
+    The scale class manages scale object. This include the construction of scales included in the NAMED_SCALE dict.
+    the scale is a list of all possible notes in the given scale across the entire piano. This means that the root note
+    is not necessarily the lowest note.
+    """
+
+    def __init__(self, key: str, scale: str | Scale, scale_range: list[int] | None = None):
+        if key[0].upper() not in (KEY_NAMES_SHARP or KEY_NAMES):
+            print("Error, key name not valid. Try on the format 'C' or 'Db' ")
+            pass
+        if key in ["A", "A#", "B", "Bb"]:
+            oct = 0
+        else:
+            oct = 1
+        self.root: Note = _make_note(key + str(oct))  # sets the root of the scale in valid string format
+        self.key: str = key
+        self.scale_type: str | Scale = scale
+        if isinstance(scale, str):
+            self.intervals = Scale.intervals_from_name(scale)
+        elif isinstance(scale, Scale):
+            self.intervals = scale.intervals
+        else:
+            raise ValueError("Invalid scale type")
+        self.scale: list[Note] = self.build_scale()
+        self.scale_pitches: list[int] = self.get_scale_pitches()
+        if scale_range is not None:
+            self.limit_range(scale_range)
+
+    @staticmethod
+    def intervals_from_name(scale_name: str) -> tuple[int, ...]:
+        global NAMED_SCALES
+        scale_name = scale_name.lower()
+
+        # supporting alternative formatting..
+        for text in ['scale', 'mode']:
+            scale_name = scale_name.replace(text, '')
+        for text in [" ", "-"]:
+            scale_name = scale_name.replace(text, "_")
+        return tuple(NAMED_SCALES[scale_name])
+
+    def build_scale(self) -> list[Note]:
+        start_pitch = self.root.midi_number
+        scale_len = len(self.intervals)
+        highest_possible_pitch = PIANO_C8
+        lowest_possible_pitch = PIANO_A0
+        j = 0
+        scale: list[Note] = []
+        pitch = start_pitch
+        # adds all possible values above the root pitch
+        while pitch <= highest_possible_pitch:
+            scale.append(_make_note(pitch))
+            pitch = scale[j].midi_number + self.intervals[j % scale_len]
+            j += 1
+        # adds all possible values under the root pitch
+        j = scale_len - 1
+        pitch = start_pitch - self.intervals[j % scale_len]
+        while pitch >= lowest_possible_pitch:
+            scale.insert(0, _make_note(pitch))
+            j -= 1
+            pitch = pitch - self.intervals[j % scale_len]
+        return scale
+
+    def get_scale_pitches(self) -> list[int]:
+        scale_pitches: list[int] = []
+        for notes in self.scale:
+            scale_pitches.append(notes.midi_number)
+        return scale_pitches
+
+    def get_scale_range(self, scale_range: list[int]) -> list[int]:
+        """
+        :param scale_range: [int] list of note pitches in the range to be returned
+        :return: the scale limited to the given range
+        """
+        scale_pitches: list[int] = []
+        for notes in scale_range:
+            if notes in self.scale_pitches:
+                scale_pitches.append(notes)
+        return scale_pitches
+
+    def limit_range(self, scale_range: list[int]) -> None:
+        scale: list[Note] = []
+        for notes in scale_range:
+            if notes in self.scale_pitches:
+                scale.append(_make_note(notes))
+        self.scale = scale
+
+    def set_time(self, duration: float) -> None:
+        raise NotImplementedError
+
+
+class Melody:
+    def __init__(
+            self,
+            key: str,
+            scale: str,
+            bar_length: float,
+            melody_notes: list[int] | None = None,
+            melody_rhythm: list[float] | None = None,
+            ties: list[bool] | None = None,
+            start: int = 0,
+            voice_range: list[int] | None = None
+    ):
+        "Search Space"
+        self.key: str = key
+        self.scale_name: str = scale
+        self.voice_range: list[int] | None = voice_range
+        self.scale: Scale = Scale(key, scale, voice_range)
+        self.scale_pitches: list[int] = self.scale.get_scale_pitches()
+        self.note_resolution: int = 8
+        self.start: int = start
+        self.bar_length: float = float(bar_length)
+
+        """Music Representation"""
+        self.pitches: list[int] | None = melody_notes
+        self.rhythm: list[float] | None = melody_rhythm
+        self.ties: list[bool] | None = ties
+        if self.pitches is not None:
+            self.search_domain: list[list[int]] = [self.scale_pitches for notes in self.pitches]
+        else:
+            self.search_domain: list[list[int]] = [self.scale_pitches]
+
+    def set_ties(self, ties: list[bool]) -> None:
+        self.ties = ties.copy()
+
+    def set_rhythm(self, rhythm: list[float]) -> None:
+        self.rhythm = rhythm.copy()
+
+    def set_melody(self, melody: list[int]) -> None:
+        self.pitches = melody.copy()
+
+    def get_ties(self) -> list[bool]:
+        return self.ties.copy() if self.ties is not None else []
+
+    def get_rhythm(self) -> list[float]:
+        return self.rhythm.copy() if self.rhythm is not None else []
+
+    def get_melody(self) -> list[int]:
+        return self.pitches.copy() if self.pitches is not None else []
+
+    def get_end_time(self) -> float:
+        t = self.start
+        if self.rhythm is not None:
+            for elem in self.rhythm:
+                t += elem
+        return t * self.bar_length / float(self.note_resolution)
+
+
+class CantusFirmus(Melody):
     # Some constants for easy access
-    perfect_intervals = [Unison, P5, Octave]
-    dissonant_intervals = [m7, M7, Tritone, -m6, -m7, -M7]
-    consonant_melodic_intervals = [m2, M2, m3, M3, P4, P5, m6, Octave, -m2, -M2, -m3, -M3, -P4, -P5, -Octave]
+    perfect_intervals: list[int] = [Unison, P5, Octave]
+    dissonant_intervals: list[int] = [m7, M7, Tritone, -m6, -m7, -M7]
+    consonant_melodic_intervals: list[int] = [m2, M2, m3, M3, P4, P5, m6, Octave, -m2, -M2, -m3, -M3, -P4, -P5, -Octave]
 
-    def __init__(self, key, scale, bar_length, melody_notes=None, melody_rhythm=None, start=0, voice_range=RANGES[ALTO]):
+    def __init__(self, key: str, scale: str, bar_length: float, melody_notes: list[int] | None = None, melody_rhythm: list[float] | None = None, start: int = 0, voice_range: list[int] = RANGES[ALTO]):
         super(CantusFirmus, self).__init__(key, scale, bar_length, melody_notes=melody_notes, melody_rhythm=melody_rhythm,
                                            start=start, voice_range=voice_range)
-        self.cf_errors = []
+        self.cf_errors: list[str] = []
 
         """ Music representation"""
-        self.rhythm = self._generate_rhythm()
-        self.ties = [False]*len(self.rhythm)
-        self.pitches = self._generate_cf()
-        self.length = len(self.rhythm)
+        self.rhythm: list[tuple[int]] = self._generate_rhythm()
+        self.ties: list[bool] = [False]*len(self.rhythm)
+        self.pitches: list[int] = self._generate_cf()
+        self.length: int = len(self.rhythm)
         self.ERROR_THRESHOLD: int = 0
 
-    def _start_note(self):
-        root = self.key
+    def _start_note(self) -> tuple[list[int], int]:
+        root: str = self.key
         try:
-            root_idx = KEY_NAMES.index(root)
+            root_idx: int = KEY_NAMES.index(root)
         except:
             root_idx = KEY_NAMES_SHARP.index(root)
-        v_range = self.voice_range
-        possible_start_notes = []
+        v_range: list[int] = self.voice_range
+        possible_start_notes: list[int] = []
         for pitches in v_range:
             if pitches % Octave == root_idx:
                 possible_start_notes.append(pitches)
-        tonics = possible_start_notes
+        tonics: list[int] = possible_start_notes
         return tonics, possible_start_notes[0]
 
-    def _penultimate_note(self):
+    def _penultimate_note(self) -> int:
         """ The last note can be approached from above or below.
             It is however most common that the last note is approached from above
         """
-        leading_tone = self._start_note()[1] - 1
-        super_tonic = self._start_note()[1] + 2
-        weights = [0.1, 0.9]  # it is more common that the penultimate note is the supertonic than leading tone
-        penultimate_note = rm.choices([leading_tone, super_tonic], weights)[0]
+        leading_tone: int = self._start_note()[1] - 1
+        super_tonic: int = self._start_note()[1] + 2
+        weights: list[float] = [0.1, 0.9]  # it is more common that the penultimate note is the supertonic than leading tone
+        penultimate_note: int = rm.choices([leading_tone, super_tonic], weights)[0]
         return penultimate_note
 
-    def _get_leading_tones(self):
+    def _get_leading_tones(self) -> list[int]:
         if self.scale_name == "minor":
-            leading_tone = self._start_note()[1] - 2
+            leading_tone: int = self._start_note()[1] - 2
         else:
             leading_tone = self._start_note()[1] - 1
         return [leading_tone]
 
-    def _generate_rhythm(self):
+    def _generate_rhythm(self) -> list[tuple[int]]:
         """
-        Generates the number of bars for the cantus firmus. Length between 8 and 13 bars, with 12 being most common.
-        Therefore modelled as a uniform distribution over 8 to 14
-        :return:
+        Generates a random rhythm for the cantus firmus
+        Empirically, 12 seems to be the most common, but the rhythm can be any length between 8 and 14
         """
-        random_length = rm.randint(8, 14)
-        return [(8,)]*random_length
+        random_length: int = rm.choice(list(range(8, 15)) + [12] * 2)
+        return [(8,)] * random_length
 
-    def _is_step(self, note, prev_note):
+    def _is_step(self, note: int, prev_note: int) -> bool:
         if abs(prev_note-note) in [m2, M2]:
             return True
         else:
             return False
 
-    def _is_small_leap(self, note, prev_note):
+    def _is_small_leap(self, note: int, prev_note: int) -> bool:
         if abs(prev_note-note) in [m3, M3]:
             return True
         else:
             return False
 
-    def _is_large_leap(self, note, prev_note):
+    def _is_large_leap(self, note: int, prev_note: int) -> bool:
         if abs(prev_note-note) >= P4:
             return True
         else:
             return False
 
-    """ RULES FOR THE CANTUS FIRMUS"""
-
-    def _is_climax(self, cf_shell):
+    def _is_climax(self, cf_shell: list[int]) -> bool:
         if cf_shell.count(max(cf_shell)) == 1:
             return True
         else:
             return False
 
-    def _is_resolved_leading_tone(self, cf_shell):
-        tonics = self._start_note()[0]
-        leading_tones = self._get_leading_tones()
+    def _is_resolved_leading_tone(self, cf_shell: list[int]) -> bool:
+        tonics: list[int] = self._start_note()[0]
+        leading_tones: list[int] = self._get_leading_tones()
         for leading_tone in leading_tones:
             if leading_tone in cf_shell and cf_shell[cf_shell.index(leading_tone)+1] != tonics[0]:
                 return False
         return True
 
-    def _is_dissonant_intervals(self, cf_shell):
+    def _is_dissonant_intervals(self, cf_shell: list[int]) -> bool:
         for i in range(len(cf_shell)-1):
             if cf_shell[i+1] - cf_shell[i] in self.dissonant_intervals:
                 return True
         return False
 
-    def _check_leaps(self, cf_shell):
-        penalty = 0
-        num_large_leaps = 0
+    def _check_leaps(self, cf_shell: list[int]) -> int:
+        penalty: int = 0
+        num_large_leaps: int = 0
         for i in range(len(cf_shell)-2):
             if self._is_large_leap(cf_shell[i], cf_shell[i+1]):
                 num_large_leaps += 1
@@ -129,21 +286,21 @@ class CantusFirmus(m.Melody):
             penalty += 100
         return penalty
 
-    def _is_valid_note_count(self, cf_shell):
+    def _is_valid_note_count(self, cf_shell: list[int]) -> bool:
         for notes in set(cf_shell):
             if cf_shell.count(notes) > 4:
                 return False
             else:
                 return True
 
-    def _is_valid_range(self, cf_shell):
+    def _is_valid_range(self, cf_shell: list[int]) -> bool:
         if abs(max(cf_shell)-min(cf_shell)) > Octave+M3:
             return False
         else:
             return True
 
-    def _is_repeated_motifs(self, cf_shell):
-        paired_notes = []
+    def _is_repeated_motifs(self, cf_shell: list[int]) -> bool:
+        paired_notes: list[list[int]] = []
         for i in range(len(cf_shell)-1):
             if cf_shell[i] == cf_shell[i+1]:
                 return True
@@ -155,8 +312,8 @@ class CantusFirmus(m.Melody):
                 return True
         return False
 
-    def _cost_function(self, cf_shell):
-        penalty = 0
+    def _cost_function(self, cf_shell: list[int]) -> int:
+        penalty: int = 0
         penalty = self._check_leaps(cf_shell)
         if not self._is_valid_note_count(cf_shell):
             self.cf_errors.append("note repetition")
@@ -178,23 +335,20 @@ class CantusFirmus(m.Melody):
             penalty += 100
         return penalty
 
-    def _initialize_cf(self):
-        """
-        Randomizes the initial cf and sets correct start, end, and penultimate notes.
-        :return: list of cf pitches.
-        """
-        start_note = self._start_note()[1]
-        end_note = start_note
-        penultimate_note = self._penultimate_note()
-        length = len(self.rhythm)
-        cf_shell = [rm.choice(self.scale_pitches) for i in range(length)]
+    def _initialize_cf(self) -> list[int]:
+        # Generates a random cantus firmus shell
+        start_note: int = self._start_note()[1]
+        end_note: int = start_note
+        penultimate_note: int = self._penultimate_note()
+        length: int = len(self.rhythm)
+        cf_shell: list[int] = [rm.choice(self.scale_pitches) for i in range(length)]
         cf_shell[0] = start_note
         cf_shell[-1] = end_note
         cf_shell[-2] = penultimate_note
         return cf_shell
 
-    def _get_melodic_consonances(self, prev_note):
-        mel_cons = []
+    def _get_melodic_consonances(self, prev_note: int) -> list[int]:
+        mel_cons: list[int] = []
         for intervals in self.consonant_melodic_intervals:
             if prev_note+intervals in self.scale_pitches:
                 mel_cons.append(prev_note+intervals)
@@ -202,22 +356,22 @@ class CantusFirmus(m.Melody):
         rm.shuffle(mel_cons)
         return mel_cons
 
-    def _generate_cf(self):
-        total_penalty = math.inf
-        iteration = 0
+    def _generate_cf(self) -> list[int]:
+        total_penalty: int = INFINITY
+        iteration: int = 0
         while total_penalty > 0:
-            cf_shell = self._initialize_cf()  # initialized randomly
+            cf_shell: list[int] = self._initialize_cf()  # initialized randomly
             for i in range(1, len(cf_shell)-2):
                 self.cf_errors = []
-                local_max = math.inf
-                cf_draft = cf_shell.copy()
-                mel_cons = self._get_melodic_consonances(cf_shell[i-1])
+                local_max: int = INFINITY
+                cf_draft: list[int] = cf_shell.copy()
+                mel_cons: list[int] = self._get_melodic_consonances(cf_shell[i-1])
                 for notes in mel_cons:
                     cf_draft[i] = notes
-                    local_penalty = self._cost_function(cf_draft)
+                    local_penalty: int = self._cost_function(cf_draft)
                     if local_penalty <= local_max:
                         local_max = local_penalty
-                        best_choice = notes
+                        best_choice: int = notes
                 cf_shell[i] = best_choice
             self.cf_errors = []
             total_penalty = self._cost_function(cf_shell)
@@ -231,7 +385,7 @@ class Counterpoint:
             self.voice_range = RANGES[RANGES.index(cf.voice_range)+1]
         else:
             self.voice_range = RANGES[RANGES.index(cf.voice_range)-1]
-        self.melody = m.Melody(cf.key, cf.scale, cf.bar_length, voice_range=self.voice_range)
+        self.melody = Melody(cf.key, cf.scale, cf.bar_length, voice_range=self.voice_range)
         self.ctp_position = ctp_position
         self.scale_pitches = self.melody.scale_pitches
         self.cf = cf
