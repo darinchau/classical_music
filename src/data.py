@@ -253,7 +253,7 @@ class Note:
     octave: int
     duration: float
     offset: float
-    time_agnostic: bool
+    real_time: bool
     velocity: int
 
     def __post_init__(self):
@@ -317,7 +317,7 @@ class Note:
         return self.midi_number - PIANO_A0
 
     @classmethod
-    def from_str(cls, note: str, time_agnostic: bool = False, velocity: int = 64) -> Note:
+    def from_str(cls, note: str, real_time: bool = True, velocity: int = 64) -> Note:
         """Creates a Note from a string note.
 
         Example: A4[0, 1] is A in the 4th octave with a duration of 0 and offset of 1."""
@@ -335,12 +335,12 @@ class Note:
             octave=int(octave),
             duration=duration,
             offset=offset,
-            time_agnostic=time_agnostic,
+            real_time=real_time,
             velocity=velocity
         )
 
     @classmethod
-    def from_note(cls, note: m21.note.Note, time_agnostic: bool = False, velocity: int = 64) -> Note:
+    def from_note(cls, note: m21.note.Note, real_time: bool = False, velocity: int = 64) -> Note:
         """Creates a Note from a music21 note."""
         alter = note.pitch.alter
         assert alter == int(alter), f"Alter must be an integer, but found {alter}"
@@ -355,12 +355,12 @@ class Note:
             octave=octave,
             duration=float(duration),
             offset=float(offset),
-            time_agnostic=time_agnostic,
+            real_time=real_time,
             velocity=velocity
         )
 
     @classmethod
-    def from_midi_number(cls, midi_number: int, duration: float = 0., offset: float = 0., time_agnostic: bool = False, velocity: int = 64) -> Note:
+    def from_midi_number(cls, midi_number: int, duration: float = 0., offset: float = 0., real_time: bool = True, velocity: int = 64) -> Note:
         """Creates a Note from a MIDI number. A4 maps to 69. If accidentals are needed, assumes the note is sharp."""
         octave = (midi_number // 12) - 1
         pitch = [0, 7, 2, 9, 4, -1, 6, 1, 8, 3, 10, 5][midi_number % 12]
@@ -369,7 +369,7 @@ class Note:
             octave=octave,
             duration=duration,
             offset=offset,
-            time_agnostic=time_agnostic,
+            real_time=real_time,
             velocity=velocity
         )
 
@@ -378,13 +378,13 @@ class PianoRoll:
     The roll r[i, j] represents the strength of the jth piano key being pressed at time i.
     By convention, 0-88 is the piano keys, r[:, 88] is the sustain pedal, and r[:, 89] is the soft pedal.
     """
-    def __init__(self, pianoroll: NDArray[np.float32], resolution: int = 24, time_agnostic: bool = False):
+    def __init__(self, pianoroll: NDArray[np.float32], resolution: int = 24, real_time: bool = True):
         assert np.all(pianoroll >= 0) and np.all(pianoroll <= 1), "Pianoroll must be between 0 and 1"
         assert pianoroll.shape[1] == 90, "Pianoroll must have 90 features"
         assert resolution > 0, "Resolution must be greater than 0"
         self._pianoroll = pianoroll
         self._resolution = resolution
-        self._time_agnostic = time_agnostic
+        self._real_time = real_time
         self._pianoroll.flags.writeable = False
 
     @property
@@ -401,8 +401,8 @@ class PianoRoll:
         return self._pianoroll.shape[0] / self._resolution
 
     @property
-    def time_agnostic(self) -> bool:
-        return self._time_agnostic
+    def real_time(self) -> bool:
+        return self._real_time
 
     @staticmethod
     def new_zero_array(nframes: int) -> NDArray:
@@ -443,7 +443,7 @@ def is_package_installed(package_name):
         return False
     return False
 
-def _midi_to_notes_time_agnostic(midi_path: str) -> list[Note]:
+def _midi_to_notes_quarter_length(midi_path: str) -> list[Note]:
     # Use music21 to convert the midi to notes
     if not _MUSIC21_SETUP:
         _setup()
@@ -469,13 +469,13 @@ def _midi_to_notes_time_agnostic(midi_path: str) -> list[Note]:
 
         # Append the note or chord
         if isinstance(el, m21.note.Note):
-            note = Note.from_note(el, time_agnostic=True)
+            note = Note.from_note(el, real_time=False)
             # Use some python black magic to ensure the offset is calculated correctly
             object.__setattr__(note, "offset", offset)
             notes.append(note)
         elif isinstance(el, m21.chord.Chord):
             for el_ in el.notes:
-                note = Note.from_note(el_, time_agnostic=True)
+                note = Note.from_note(el_, real_time=False)
                 # Use some python black magic to ensure the offset is calculated correctly
                 object.__setattr__(note, "offset", offset)
                 notes.append(note)
@@ -529,20 +529,20 @@ def _midi_to_notes_real_time(midi_path: str) -> list[Note]:
         elif (tp == 'note_off' or (tp == 'note_on' and velocity == 0)) and note in note_on_dict:
             start_time, velocity = note_on_dict.pop(note)
             duration = current_time - start_time
-            note = Note.from_midi_number(midi_number=note, duration=duration, offset=start_time, velocity=velocity, time_agnostic=False)
+            note = Note.from_midi_number(midi_number=note, duration=duration, offset=start_time, velocity=velocity, real_time=True)
             notes.append(note)
 
     return notes
 
-def midi_to_notes(midi_path: str, time_agnostic: bool = False, normalize: bool = False) -> list[Note]:
-    """Converts a midi file to a list of notes. If time_agnostic is True, then the notes will be timed against quarter length.
+def midi_to_notes(midi_path: str, real_time: bool = True, normalize: bool = False) -> list[Note]:
+    """Converts a midi file to a list of notes. If real_time is True, then the notes will be timed against real time in seconds.
 
     If normalize is True, then the earliest note will always have an offset of 0."""
-    if time_agnostic:
-        notes = _midi_to_notes_time_agnostic(midi_path)
-    else:
+    if real_time:
         notes = _midi_to_notes_real_time(midi_path)
-    assert all(note.time_agnostic == time_agnostic for note in notes)
+    else:
+        notes = _midi_to_notes_quarter_length(midi_path)
+    assert all(note.real_time == real_time for note in notes)
     notes = sorted(notes, key=lambda x: x.offset)
     if normalize:
         min_offset = min(note.offset for note in notes)
@@ -576,7 +576,7 @@ def midi_to_audio(midi_path: str, sample_rate: int = 44100, soundfont_path: str 
 
 def notes_to_score(notes: list[Note]) -> m21.stream.Score:
     """Convert a list of notes to a music21 score. The score is only intended to be played and not for further analysis."""
-    assert all(note.time_agnostic for note in notes), "All notes must be time agnostic"
+    assert all(not note.real_time for note in notes), "All notes must be timed against quarter length"
     if not _MUSIC21_SETUP:
         _setup()
 
@@ -628,7 +628,7 @@ def notes_to_pianoroll(notes: list[Note], resolution: int = 24, eps: float = 1e-
     """Converts a list of notes to a pianoroll. A time agnostic list of notes will be converted to a time agnostic pianoroll and vice versa."""
     if not notes:
         raise ValueError("Cannot convert an empty list of notes to a pianoroll")
-    assert all(note.time_agnostic == notes[0].time_agnostic for note in notes), "All notes must have the same time agnostic property"
+    assert all(note.real_time == notes[0].real_time for note in notes), "All notes must have the same time agnostic property"
 
     max_duration = max(note.offset + note.duration for note in notes)
     max_duration = int(max_duration * resolution) + 1
@@ -662,7 +662,7 @@ def notes_to_pianoroll(notes: list[Note], resolution: int = 24, eps: float = 1e-
                 pianoroll[min(ns[i][0], ns[i + 1][0]):max(ns[i][1], ns[i + 1][1]), k - PIANO_A0] = max(ns[i][2], ns[i + 1][2]) / 127
         pianoroll[ns[-1][0]:ns[-1][1], k - PIANO_A0] = ns[-1][2] / 127
 
-    return PianoRoll(pianoroll, resolution, notes[0].time_agnostic)
+    return PianoRoll(pianoroll, resolution, notes[0].real_time)
 
 def notes_to_midi(notes: list[Note], fpath: str):
     mid = MidiFile()
