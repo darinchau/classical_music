@@ -32,8 +32,10 @@ PIANO_A0 = 21
 PIANO_C8 = 108
 _MUSIC21_SETUP = False
 
+
 class NotSupportedOnWindows(NotImplementedError):
     pass
+
 
 def _get_sounddevice():
     try:
@@ -41,6 +43,7 @@ def _get_sounddevice():
         return sd
     except ImportError:
         raise RuntimeError("You need to install sounddevice to use the play function")
+
 
 def _setup():
     from music21 import environment
@@ -58,11 +61,13 @@ def _setup():
 
     _MUSIC21_SETUP = True
 
+
 class Audio:
     """Represents an audio that can be played and saved.
 
     A stripped down version of Audio class from https://github.com/darinchau/AutoMasher
     that uses numpy array instead of pytorch tensor so we don't have to install pytorch"""
+
     def sanity_check(self):
         assert self._sample_rate > 0
         assert isinstance(self._sample_rate, int)
@@ -148,6 +153,7 @@ class Audio:
         info is a list of stuff you want to print. Each element is a tuple of (str, float) where the float is the time in seconds
         if progress is true, then display a nice little bar that shows the progress of the audio"""
         sd = _get_sounddevice()
+
         def _play(sound, sr, nc, stop_event):
             event = threading.Event()
             x = 0
@@ -180,16 +186,16 @@ class Audio:
                 self._stop_audio = True
 
         if info is not None:
-            blocking = True # Otherwise jupyter notebook will behave weirdly
+            blocking = True  # Otherwise jupyter notebook will behave weirdly
         else:
             if is_ipython():
-                from IPython.display import Audio as IPAudio # type: ignore
-                return IPAudio(self._data, rate = self.sample_rate)
+                from IPython.display import Audio as IPAudio  # type: ignore
+                return IPAudio(self._data, rate=self.sample_rate)
             info = []
-        info = sorted(info, key = lambda x: x[1])
+        info = sorted(info, key=lambda x: x[1])
         longest_info = max([len(x[0]) for x in info]) if info else 0
         sound = self._data.T
-        self._thread = threading.Thread(target=_play, args=(sound, self.sample_rate, self.nchannels, lambda :self._stop_audio))
+        self._thread = threading.Thread(target=_play, args=(sound, self.sample_rate, self.nchannels, lambda: self._stop_audio))
         self._stop_audio = False
         self._thread.start()
         if blocking:
@@ -210,7 +216,7 @@ class Audio:
 
         self._thread.join()
         self._thread = None
-        self._stop_audio = False # Reset the state
+        self._stop_audio = False  # Reset the state
 
     def save(self, fpath: str):
         """Saves the audio at the provided file path. WAV is (almost certainly) guaranteed to work"""
@@ -230,7 +236,7 @@ class Audio:
         try:
             sf.write(fpath, data.T, self._sample_rate, format="wav")
             return
-        except (ValueError, RuntimeError) as e: # Seems like torchaudio changed the error type to runtime error in 2.2?
+        except (ValueError, RuntimeError) as e:  # Seems like torchaudio changed the error type to runtime error in 2.2?
             # or the file path is invalid
             raise RuntimeError(f"Error saving the audio: {e} - {fpath}")
 
@@ -311,25 +317,68 @@ class Note:
         This is also the MIDI number of the note."""
         return self.pitch_number + 12 * self.octave + 12
 
-    @property
-    def chromatic_number(self):
-        """The chromatic number of the note. A0 is 0, A#0 is 1, B0 is 2, C1 is 3, etc."""
-        return self.midi_number - PIANO_A0
+    def transpose(self, interval: int, compound: int = 0) -> Note:
+        """Transposes the note by a given interval. The interval is given by the relative LOF index.
+        So unison is 0, perfect fifths is 1, major 3rds is 4, etc.
+        Assuming transposing up. If you want to transpose down, say a perfect fifth,
+        then transpose up a perfect fourth and compound by -1."""
+        new_index = self.index + interval
+        # Make a draft note to detect octave changes
+        draft_note = Note(
+            index=new_index,
+            octave=self.octave,
+            duration=self.duration,
+            offset=self.offset,
+            real_time=self.real_time,
+            velocity=self.velocity
+        )
+        new_octave = self.octave + compound
+        if draft_note.pitch_number < self.pitch_number:
+            new_octave += 1
+        return Note(
+            index=new_index,
+            octave=new_octave,
+            duration=self.duration,
+            offset=self.offset,
+            real_time=self.real_time,
+            velocity=self.velocity
+        )
 
     @classmethod
-    def from_str(cls, note: str, real_time: bool = True, velocity: int = 64) -> Note:
+    def from_str(cls, note: str, real_time: bool = True) -> Note:
         """Creates a Note from a string note.
 
-        Example: A4[0, 1] is A in the 4th octave with a duration of 0 and offset of 1."""
-        duration = float(note.split("[")[1].split(",")[0])
-        offset = float(note.split(",")[1].split("]")[0])
-        note = note.split("[")[0]
+        Example: A4[0, 1, 64] is A in the 4th octave with a duration of 0 and offset of 1 and velocity of 64.
+        A4[0, 1] is A in the 4th octave with a duration of 0 and offset of 1.
+        A4 is A in the 4th octave with a duration of 0 and offset of 0.
+        A is A in the (implied) 4th octave with a duration of 0 and offset of 0."""
+        duration = 0
+        offset = 0
+        velocity = 64
+        if "[" in note:
+            note, rest = note.split("[")
+            rest = rest.rstrip("]")
+            if "," in rest:
+                duration, offset, velocity = rest.split(",")
+                duration = float(duration)
+                offset = float(offset)
+                velocity = int(velocity)
+            else:
+                duration, offset = rest.split(",")
+                duration = float(duration)
+                offset = float(offset)
+
         match = _PITCH_NAME_REGEX.match(note)
-        assert match, f"Note {note} is not a valid note name"
+        if not match:
+            # Add the implied octave
+            match = _PITCH_NAME_REGEX.match(note + "4")
+            assert match, f"The name {note} is not a valid note name"
+
         pitch_name, alter, octave = match.groups()
         alter = alter.replace("x", "##").replace("-", "b").replace("+", "#")
         sharps = reduce(lambda x, y: x + 1 if y == "#" else x - 1, alter, 0)
-        assert pitch_name in ("C", "D", "E", "F", "G", "A", "B"), f"Step must be one of CDEFGAB, but found {pitch_name}" # to pass the typechecker
+        assert pitch_name in ("C", "D", "E", "F", "G", "A", "B"), f"Step must be one of CDEFGAB, but found {pitch_name}"  # to pass the typechecker
+
         return cls(
             index=_step_alter_to_lof_index(pitch_name, sharps),
             octave=int(octave),
@@ -373,11 +422,13 @@ class Note:
             velocity=velocity
         )
 
+
 class PianoRoll:
     """A piano roll is defined as a 2D matrix (T, 90) where T is the number of time steps and 88 piano keys + 2 pedals is the feature vectors.
     The roll r[i, j] represents the strength of the jth piano key being pressed at time i.
     By convention, 0-88 is the piano keys, r[:, 88] is the sustain pedal, and r[:, 89] is the soft pedal.
     """
+
     def __init__(self, pianoroll: NDArray[np.float32], resolution: int = 24, real_time: bool = True):
         assert np.all(pianoroll >= 0) and np.all(pianoroll <= 1), "Pianoroll must be between 0 and 1"
         assert pianoroll.shape[1] == 90, "Pianoroll must have 90 features"
@@ -423,14 +474,17 @@ class PianoRoll:
                 hop_length=1,
             )
 
+
 def _step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], alter: int) -> int:
     return {"C": 0, "D": 2, "E": 4, "F": -1, "G": 1, "A": 3, "B": 5}[step] + 7 * alter
+
 
 def _convert_midi_to_wav(input_path: str, output_path: str, soundfont_path="~/.fluidsynth/default_sound_font.sf2", sample_rate=44100, verbose=False):
     assert _is_package_installed("fluidsynth"), "You need to install fluidsynth to convert midi to audio, refer to README for more details"
     subprocess.call(['fluidsynth', '-ni', soundfont_path, input_path, '-F', output_path, '-r', str(sample_rate)],
-        stdout=subprocess.DEVNULL if not verbose else None,
-        stderr=subprocess.DEVNULL if not verbose else None)
+                    stdout=subprocess.DEVNULL if not verbose else None,
+                    stderr=subprocess.DEVNULL if not verbose else None)
+
 
 def _is_package_installed(package_name):
     if os.name == "nt":
@@ -442,6 +496,7 @@ def _is_package_installed(package_name):
     except subprocess.CalledProcessError:
         return False
     return False
+
 
 def _midi_to_notes_quarter_length(midi_path: str) -> list[Note]:
     # Use music21 to convert the midi to notes
@@ -481,6 +536,7 @@ def _midi_to_notes_quarter_length(midi_path: str) -> list[Note]:
                 notes.append(note)
     return notes
 
+
 def _midi_to_notes_real_time(midi_path: str) -> list[Note]:
     mid = mido.MidiFile(midi_path)
     tempo = 500000  # Default tempo (500,000 microseconds per beat)
@@ -499,7 +555,7 @@ def _midi_to_notes_real_time(midi_path: str) -> list[Note]:
             if msg.type in ['note_on', 'note_off']:
                 events.append((current_tick, msg.note, msg.type, msg.velocity))
 
-    del msg # to apease the type checker
+    del msg  # to apease the type checker
 
     tempo_changes.sort()
     events.sort()
@@ -534,6 +590,7 @@ def _midi_to_notes_real_time(midi_path: str) -> list[Note]:
 
     return notes
 
+
 def _check_pianoroll_fail_reason(array: NDArray, raise_error: bool = False) -> typing.Optional[str]:
     def _error(error_message: str):
         if raise_error:
@@ -564,6 +621,7 @@ def _check_pianoroll_fail_reason(array: NDArray, raise_error: bool = False) -> t
                 note_on_dict[note] = array[i, note]
     return None
 
+
 def midi_to_notes(midi_path: str, real_time: bool = True, normalize: bool = False) -> list[Note]:
     """Converts a midi file to a list of notes. If real_time is True, then the notes will be timed against real time in seconds.
 
@@ -580,6 +638,7 @@ def midi_to_notes(midi_path: str, real_time: bool = True, normalize: bool = Fals
             # Use python black magic - this is safe because the object only has reference here
             object.__setattr__(note, "offset", note.offset - min_offset)
     return notes
+
 
 def score_to_audio(score: m21.stream.Score, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
     """Inner helper function to convert a music21 score to audio. The score will be consumed."""
@@ -598,11 +657,13 @@ def score_to_audio(score: m21.stream.Score, sample_rate: int = 44100, soundfont_
         _convert_midi_to_wav(f1.name, f2.name, soundfont_path, sample_rate)
         return Audio.load(f2.name)
 
+
 def midi_to_audio(midi_path: str, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
     """Converts MIDI to audio. This function retains instrument information. To make everything into piano, use midi_to_notes and then notes_to_audio"""
     with tempfile.NamedTemporaryFile(suffix=".wav") as f:
         _convert_midi_to_wav(midi_path, f.name, soundfont_path, sample_rate)
         return Audio.load(f.name)
+
 
 def notes_to_score(notes: list[Note]) -> m21.stream.Score:
     """Convert a list of notes to a music21 score. The score is only intended to be played and not for further analysis."""
@@ -649,6 +710,7 @@ def notes_to_score(notes: list[Note]) -> m21.stream.Score:
         part.makeRests(inPlace=True, fillGaps=True)
     return score
 
+
 def notes_to_pianoroll(notes: list[Note], resolution: int = 24, eps: float = 1e-6) -> PianoRoll:
     """Converts a list of notes to a pianoroll. A real-timed list of notes will be converted to a real-timed pianoroll and vice versa."""
     if not notes:
@@ -689,6 +751,7 @@ def notes_to_pianoroll(notes: list[Note], resolution: int = 24, eps: float = 1e-
 
     return PianoRoll(pianoroll, resolution, notes[0].real_time)
 
+
 def notes_to_midi(notes: list[Note], fpath: str):
     mid = MidiFile()
     track = MidiTrack()
@@ -713,9 +776,10 @@ def notes_to_midi(notes: list[Note], fpath: str):
 
     mid.save(fpath)
 
+
 def pianoroll_to_notes(pianoroll: PianoRoll) -> list[Note]:
     """Converts a pianoroll to a list of notes. A list of notes with the same timing property will be returned."""
-    _check_pianoroll_fail_reason(pianoroll.piano_roll, raise_error = True)
+    _check_pianoroll_fail_reason(pianoroll.piano_roll, raise_error=True)
     array = pianoroll.piano_roll
     note_on_dict = {}
     total_time = array.shape[0]
