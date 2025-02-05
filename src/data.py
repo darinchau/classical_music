@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import threading
 import typing
+import warnings
 from .util import NATURAL, is_ipython
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -390,26 +391,37 @@ class PianoRoll:
     def resolution(self) -> int:
         return self._resolution
 
+    @property
+    def piano_roll(self) -> NDArray:
+        return self._pianoroll
+
+    @property
+    def implied_duration(self) -> float:
+        """The duration of the pianoroll as suggested by the shape of the pianoroll"""
+        return self._pianoroll.shape[0] / self._resolution
+
+    @property
+    def time_agnostic(self) -> bool:
+        return self._time_agnostic
+
     @staticmethod
     def new_zero_array(nframes: int) -> NDArray:
         return np.zeros((nframes, 90), dtype=np.float32)
 
     def plot(self, **kwargs):
         """Plots the pianoroll"""
-        from .plot import _plot_pianoroll
-        p = np.zeros((self._pianoroll.shape[0], 128), dtype=np.float32)
-        p[:, 21:109] = self._pianoroll[:, :88]
-        p[:, 0] = self._pianoroll[:, 88]
-        p[:, 127] = self._pianoroll[:, 89]
-        fig, ax = plt.subplots()
-        _plot_pianoroll(
-            ax=ax,
-            pianoroll=self._pianoroll,
-            is_drum=False,
-            resolution=self._resolution,
-            **kwargs
-        )
-        return fig
+        # Hijack the specshow function to plot the pianoroll
+        # Since chroma cqt plots are just fancy pianorolls
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            librosa.display.specshow(
+                self._pianoroll.T,
+                sr=self._resolution,
+                x_axis='time',
+                y_axis='cqt_note',
+                fmin=librosa.midi_to_hz(21).item(),
+                hop_length=1,
+            )
 
 def step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], alter: int) -> int:
     return {"C": 0, "D": 2, "E": 4, "F": -1, "G": 1, "A": 3, "B": 5}[step] + 7 * alter
@@ -431,69 +443,105 @@ def is_package_installed(package_name):
         return False
     return False
 
+def _midi_to_notes_time_agnostic(midi_path: str) -> list[Note]:
+    # Use music21 to convert the midi to notes
+    if not _MUSIC21_SETUP:
+        _setup()
+    stream = m21.converter.parse(midi_path)
+    notes: list[Note] = []
+    if not isinstance(stream, m21.stream.Score):
+        raise ValueError(f"Midi file must contain a score, found {type(stream)}")
+    for el in stream.recurse().getElementsByClass((
+        m21.note.Note,
+        m21.chord.Chord,
+    )):
+        # Calculate the offset
+        x: m21.base.Music21Object = el
+        offset = Fraction()
+        while x.activeSite is not None:
+            offset += x.offset
+            x = x.activeSite
+            if x.id == stream.id:
+                break
+        else:
+            assert False, f"Element {el} is not in the score"
+        offset = float(offset)
+
+        # Append the note or chord
+        if isinstance(el, m21.note.Note):
+            note = Note.from_note(el, time_agnostic=True)
+            # Use some python black magic to ensure the offset is calculated correctly
+            object.__setattr__(note, "offset", offset)
+            notes.append(note)
+        elif isinstance(el, m21.chord.Chord):
+            for el_ in el.notes:
+                note = Note.from_note(el_, time_agnostic=True)
+                # Use some python black magic to ensure the offset is calculated correctly
+                object.__setattr__(note, "offset", offset)
+                notes.append(note)
+    return notes
+
+def _midi_to_notes_real_time(midi_path: str) -> list[Note]:
+    mid = mido.MidiFile(midi_path)
+    tempo = 500000  # Default tempo (500,000 microseconds per beat)
+    ticks_per_beat = mid.ticks_per_beat
+
+    tempo_changes = [(0, tempo)]
+    events = []
+
+    # Convert delta times to absolute times and collect all events
+    for track in mid.tracks:
+        current_tick = 0
+        for msg in track:
+            current_tick += msg.time
+            if msg.type == 'set_tempo':
+                tempo_changes.append((current_tick, msg.tempo))
+            if msg.type in ['note_on', 'note_off']:
+                events.append((current_tick, msg.note, msg.type, msg.velocity))
+
+    del msg # to apease the type checker
+
+    tempo_changes.sort()
+    events.sort()
+    notes: list[Note] = []
+    current_time = 0
+    last_tick = 0
+    note_on_dict: dict[int, tuple[float, int]] = {}
+
+    # Convert ticks in events to real time using the global tempo map
+    for event in events:
+        tick, note, tp, velocity = event
+
+        while tempo_changes and tempo_changes[0][0] <= tick:
+            tempo_change_tick, new_tempo = tempo_changes.pop(0)
+            if tempo_change_tick > last_tick:
+                current_time += mido.tick2second(tempo_change_tick - last_tick, ticks_per_beat, tempo)
+                last_tick = tempo_change_tick
+            tempo = new_tempo
+
+        # Update current time up to the event tick
+        if tick > last_tick:
+            current_time += mido.tick2second(tick - last_tick, ticks_per_beat, tempo)
+            last_tick = tick
+
+        if tp == 'note_on' and velocity > 0:
+            note_on_dict[note] = (current_time, velocity)
+        elif (tp == 'note_off' or (tp == 'note_on' and velocity == 0)) and note in note_on_dict:
+            start_time, velocity = note_on_dict.pop(note)
+            duration = current_time - start_time
+            note = Note.from_midi_number(midi_number=note, duration=duration, offset=start_time, velocity=velocity, time_agnostic=False)
+            notes.append(note)
+
+    return notes
+
 def midi_to_notes(midi_path: str, time_agnostic: bool = False, normalize: bool = False) -> list[Note]:
     """Converts a midi file to a list of notes. If time_agnostic is True, then the notes will be timed against quarter length.
 
     If normalize is True, then the earliest note will always have an offset of 0."""
     if time_agnostic:
-        # Use music21 to convert the midi to notes
-        if not _MUSIC21_SETUP:
-            _setup()
-        stream = m21.converter.parse(midi_path)
-        notes: list[Note] = []
-        if not isinstance(stream, m21.stream.Score):
-            raise ValueError(f"Midi file must contain a score, found {type(stream)}")
-        for el in stream.recurse().getElementsByClass((
-            m21.note.Note,
-            m21.chord.Chord,
-        )):
-            # Calculate the offset
-            x: m21.base.Music21Object = el
-            offset = Fraction()
-            while x.activeSite is not None:
-                offset += x.offset
-                x = x.activeSite
-                if x.id == stream.id:
-                    break
-            else:
-                assert False, f"Element {el} is not in the score"
-            offset = float(offset)
-
-            # Append the note or chord
-            if isinstance(el, m21.note.Note):
-                note = Note.from_note(el, time_agnostic=True)
-                # Use some python black magic to ensure the offset is calculated correctly
-                object.__setattr__(note, "offset", offset)
-                notes.append(note)
-            elif isinstance(el, m21.chord.Chord):
-                for el_ in el.notes:
-                    note = Note.from_note(el_, time_agnostic=True)
-                    # Use some python black magic to ensure the offset is calculated correctly
-                    object.__setattr__(note, "offset", offset)
-                    notes.append(note)
+        notes = _midi_to_notes_time_agnostic(midi_path)
     else:
-        mid = MidiFile(midi_path)
-        tempo = 500000  # default tempo (microseconds per beat)
-        ticks_per_beat = mid.ticks_per_beat
-
-        notes: list[Note] = []
-
-        for track in mid.tracks:
-            current_time = 0  # current time in seconds
-            note_on_dict = {}
-            for msg in track:
-                # Convert the delta time in ticks to seconds and update current time
-                current_time += mido.tick2second(msg.time, ticks_per_beat, tempo)
-
-                if msg.type == 'set_tempo':
-                    tempo = msg.tempo
-                elif msg.type == 'note_on' and msg.velocity > 0:
-                    note_on_dict[msg.note] = (current_time, msg.velocity)
-                elif (msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0)) and msg.note in note_on_dict:
-                    start_time, velocity = note_on_dict.pop(msg.note)
-                    duration = current_time - start_time
-                    note = Note.from_midi_number(midi_number=msg.note, duration=duration, offset=start_time, velocity=velocity, time_agnostic=False)
-                    notes.append(note)
+        notes = _midi_to_notes_real_time(midi_path)
     assert all(note.time_agnostic == time_agnostic for note in notes)
     notes = sorted(notes, key=lambda x: x.offset)
     if normalize:
