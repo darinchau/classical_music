@@ -23,7 +23,7 @@ from fractions import Fraction
 from functools import lru_cache, reduce, total_ordering
 from math import pi as PI
 from music21.midi.translate import streamToMidiFile
-from mido import MidiFile
+from mido import MidiFile, MidiTrack, Message
 from numpy.typing import NDArray
 from typing import Literal
 
@@ -663,3 +663,27 @@ def notes_to_pianoroll(notes: list[Note], resolution: int = 24, eps: float = 1e-
         pianoroll[ns[-1][0]:ns[-1][1], k - PIANO_A0] = ns[-1][2] / 127
 
     return PianoRoll(pianoroll, resolution, notes[0].time_agnostic)
+
+def notes_to_midi(notes: list[Note], fpath: str):
+    mid = MidiFile()
+    track = MidiTrack()
+    mid.tracks.append(track)
+    ticks_per_beat = mid.ticks_per_beat  # Default 480
+    tempo = mido.bpm2tempo(120)  # Converts BPM to microseconds per beat, default is 120 BPM
+
+    events = []
+    for note in notes:
+        on = mido.second2tick(note.offset, ticks_per_beat, tempo)
+        off = mido.second2tick(note.offset + note.duration, ticks_per_beat, tempo)
+        events.append((on, note.midi_number, 'note_on', note.velocity))
+        events.append((off, note.midi_number, 'note_off', 0))
+
+    events.sort()
+    current_time = 0
+    for event in events:
+        time, note, tp, velocity = event
+        delta_ticks = time - current_time
+        track.append(Message(tp, note=note, velocity=velocity, time=delta_ticks))
+        current_time = time
+
+    mid.save(fpath)
