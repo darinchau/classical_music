@@ -64,3 +64,6 @@ out/
 nohup.out
 .vscode
 *.ipynb
+/resources/*
+/*.mid
+!/resources/goldberg.mid # Test file
