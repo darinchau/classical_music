@@ -173,17 +173,28 @@ class CantusFirmus(Melody):
     dissonant_intervals: list[int] = [m7, M7, Tritone, -m6, -m7, -M7]
     consonant_melodic_intervals: list[int] = [m2, M2, m3, M3, P4, P5, m6, Octave, -m2, -M2, -m3, -M3, -P4, -P5, -Octave]
 
-    def __init__(self, key: str, scale: str, bar_length: float, melody_notes: list[int] | None = None, melody_rhythm: list[float] | None = None, start: int = 0, voice_range: list[int] = RANGES[ALTO]):
-        super(CantusFirmus, self).__init__(key, scale, bar_length, melody_notes=melody_notes, melody_rhythm=melody_rhythm,
-                                           start=start, voice_range=voice_range)
+    def __init__(
+            self,
+            key: str,
+            scale: str,
+            bar_length: float,
+            melody_notes: list[int] | None = None,
+            melody_rhythm: list[float] | None = None,
+            start: int = 0,
+            voice_range: list[int] = RANGES[ALTO]
+    ):
+        super(CantusFirmus, self).__init__(
+            key, scale, bar_length,
+            melody_notes=melody_notes,
+            melody_rhythm=melody_rhythm,
+            start=start,
+            voice_range=voice_range
+        )
         self.cf_errors: list[str] = []
-
-        """ Music representation"""
         self.rhythm: list[tuple[int]] = self._generate_rhythm()
         self.ties: list[bool] = [False]*len(self.rhythm)
         self.pitches: list[int] = self._generate_cf()
         self.length: int = len(self.rhythm)
-        self.ERROR_THRESHOLD: int = 0
 
     def _start_note(self) -> tuple[list[int], int]:
         root: str = self.key
@@ -380,81 +391,85 @@ class CantusFirmus(Melody):
 
 
 class Counterpoint:
-    def __init__(self, cf: CantusFirmus, ctp_position="above"):
+    def __init__(self, cf: CantusFirmus, ctp_position: str = "above"):
         if ctp_position == "above":
-            self.voice_range = RANGES[RANGES.index(cf.voice_range)+1]
+            self.voice_range: list[int] = RANGES[RANGES.index(cf.voice_range) + 1]
         else:
-            self.voice_range = RANGES[RANGES.index(cf.voice_range)-1]
-        self.melody = Melody(cf.key, cf.scale, cf.bar_length, voice_range=self.voice_range)
-        self.ctp_position = ctp_position
-        self.scale_pitches = self.melody.scale_pitches
-        self.cf = cf
-        self.species = None
-        self.search_domain = []
-        self.ctp_errors = []
+            self.voice_range: list[int] = RANGES[RANGES.index(cf.voice_range) - 1]
+        self.melody: Melody = Melody(cf.key, cf.scale, cf.bar_length, voice_range=self.voice_range)
+        self.ctp_position: str = ctp_position
+        self.scale_pitches: list[int] = self.melody.scale_pitches
+        self.cf: CantusFirmus = cf
+        self.species: str | None = None
+        self.search_domain: list[list[int]] = []
+        self.ctp_errors: list[str] = []
 
     @property
-    def MAX_SEARCH_TIME(self):
+    def MAX_SEARCH_TIME(self) -> int:
         return 5
+
+    @property
+    def ERROR_THRESHOLD(self) -> int:
+        return 0
 
     """ VALID START, END, AND PENULTIMATE NOTES"""
 
-    def _start_notes(self):
-        cf_tonic = self.cf.pitches[0]
+    def _start_notes(self) -> list[int]:
+        cf_tonic: int = self.cf.pitches[0]
         if self.ctp_position == "above":
             if SPECIES[self.species] == 1:
                 return [cf_tonic, cf_tonic + P5, cf_tonic + Octave]
             else:
-                return [cf_tonic+P5, cf_tonic + Octave]
+                return [cf_tonic + P5, cf_tonic + Octave]
         else:
             if SPECIES[self.species] == 1:
                 return [cf_tonic - Octave, cf_tonic]
             else:
                 return [cf_tonic - Octave]
 
-    def _end_notes(self):
-        cf_tonic = self.cf.pitches[0]
+    def _end_notes(self) -> list[int]:
+        cf_tonic: int = self.cf.pitches[0]
         if self.ctp_position == "above":
             return [cf_tonic, cf_tonic + Octave]
         else:
             return [cf_tonic, cf_tonic - Octave]
 
-    def _penultimate_notes(self, cf_end):
-        cf_direction = [sign(self.cf.pitches[i] - self.cf.pitches[i - 1]) for i in range(1, len(self.cf.pitches))]
+    def _penultimate_notes(self, cf_end: int) -> list[int]:
+        cf_direction: list[int] = [sign(self.cf.pitches[i] - self.cf.pitches[i - 1]) for i in range(1, len(self.cf.pitches))]
         if self.ctp_position == "above":
-            s = 1
+            s: int = 1
         else:
-            s = -1
+            s: int = -1
         if cf_direction[-1] == 1.0:
-            penultimate = cf_end + 2
+            penultimate: int = cf_end + 2
         else:
-            penultimate = cf_end - 1
+            penultimate: int = cf_end - 1
         return [penultimate, penultimate + s * Octave]
 
     """ INITIALIZING COUNTERPOINT WITH RANDOM VALUES"""
 
-    def get_consonant_possibilities(self, cf_note):
-        poss = []
+    def get_consonant_possibilities(self, cf_note: int) -> list[int]:
+        poss: list[int] = []
         for interval in HARMONIC_CONSONANCES:
             if self.ctp_position == "above":
-                if cf_note+interval in self.scale_pitches:
-                    poss.append(cf_note+interval)
+                if cf_note + interval in self.scale_pitches:
+                    poss.append(cf_note + interval)
             else:
-                if cf_note-interval in self.scale_pitches:
-                    poss.append(cf_note-interval)
+                if cf_note - interval in self.scale_pitches:
+                    poss.append(cf_note - interval)
         return poss
 
-    def randomize_ctp_melody(self):
-        ctp_melody = []
-        i = 0
-        measure = 0
+    def randomize_ctp_melody(self) -> list[int]:
+        ctp_melody: list[int] = []
+        i: int = 0
+        measure: int = 0
         while measure < len(self.melody.rhythm):
-            note_duration = 0
+            note_duration: int = 0
             while note_duration < len(self.melody.rhythm[measure]):
                 if i == 0:
                     ctp_melody.append(rm.choice(self.search_domain[i]))
-                elif i > 0 and self.melody.ties[i-1] == True:
-                    ctp_melody.append(ctp_melody[i-1])
+                elif i > 0 and self.melody.ties[i - 1]:
+                    ctp_melody.append(ctp_melody[i - 1])
                 else:
                     ctp_melody.append(rm.choice(self.search_domain[i]))
                 i += 1
@@ -464,8 +479,8 @@ class Counterpoint:
 
     """ GENERATE COUNTERPOINT PITCHES BY CALLING THE SEARCH ALGORITHM"""
 
-    def generate_ctp(self):
-        if self.species == None:
+    def generate_ctp(self) -> None:
+        if self.species is None:
             print("No species to generate!")
         self.melody.set_melody(self.randomize_ctp_melody())
         self.ctp_errors = []
@@ -474,32 +489,37 @@ class Counterpoint:
 
 
 class FirstSpecies(Counterpoint):
-    def __init__(self, cf, ctp_position="above"):
+    def __init__(self, cf: CantusFirmus, ctp_position: str = "above"):
         super(FirstSpecies, self).__init__(cf, ctp_position)
-        self.species = "first"
-        self.ERROR_THRESHOLD = 50
+        self.species: str = "first"
         self.melody.set_rhythm(self.get_rhythm())
         self.melody.set_ties(self.get_ties())
-        self.search_domain = self._possible_notes()
+        self.search_domain: list[list[int]] = self._possible_notes()
         self.melody.set_melody(self.randomize_ctp_melody())
+
+    @property
+    def ERROR_THRESHOLD(self) -> int:
+        return 50
+
     """ RHYTHM """
 
-    def get_rhythm(self):
+    def get_rhythm(self) -> list[tuple[int]]:
         "Voices all move together in the same rhythm as the cantus firmus."
-        return [(8,)]*self.cf.length
+        return [(8,)] * self.cf.length
 
-    def get_ties(self):
-        return [False]*self.cf.length
+    def get_ties(self) -> list[bool]:
+        return [False] * self.cf.length
+
     """ HELP FUNCTIONS FOR INITIALIZING COUNTERPOINT"""
 
-    def _possible_notes(self):
-        poss = [None for elem in self.melody.rhythm]
+    def _possible_notes(self) -> list[list[int]]:
+        poss: list[list[int]] = [None for _ in self.melody.rhythm]
         for i in range(len(self.melody.rhythm)):
             if i == 0:
                 poss[i] = self._start_notes()
-            elif i == len(self.melody.rhythm)-2:
-                poss[i] = self._penultimate_notes(self.cf.pitches[i+1])
-            elif i == len(self.melody.rhythm)-1:
+            elif i == len(self.melody.rhythm) - 2:
+                poss[i] = self._penultimate_notes(self.cf.pitches[i + 1])
+            elif i == len(self.melody.rhythm) - 1:
                 poss[i] = self._end_notes()
             else:
                 poss[i] = self.get_consonant_possibilities(self.cf.pitches[i])
@@ -507,106 +527,37 @@ class FirstSpecies(Counterpoint):
 
 
 class SecondSpecies(Counterpoint):
-    def __init__(self, cf, ctp_position="above"):
+    def __init__(self, cf: CantusFirmus, ctp_position: str = "above"):
         super(SecondSpecies, self).__init__(cf, ctp_position)
-        self.species = "second"
-        self.ERROR_THRESHOLD = 50
+        self.species: str = "second"
         self.melody.set_rhythm(self.get_rhythm())
-        self.num_notes = sum(len(row) for row in self.get_rhythm())
+        self.num_notes: int = sum(len(row) for row in self.get_rhythm())
         self.melody.set_ties(self.get_ties())
-        self.search_domain = self._possible_notes()
+        self.search_domain: list[list[int]] = self._possible_notes()
         self.melody.set_melody(self.randomize_ctp_melody())
+
+    @property
+    def ERROR_THRESHOLD(self) -> int:
+        return 50
+
     """ HELP FUNCTIONS"""
 
-    def get_downbeats(self):
-        indices = list(range(len(self.cf.pitches)))*2
+    def get_downbeats(self) -> list[int]:
+        indices: list[int] = list(range(len(self.cf.pitches))) * 2
         return indices[::2]
 
-    def get_upbeats(self):
-        indices = list(range(len(self.cf.pitches)))*2
+    def get_upbeats(self) -> list[int]:
+        indices: list[int] = list(range(len(self.cf.pitches))) * 2
         return indices[1::2]
 
     """ RHYTHMIC RULES """
 
-    def get_rhythm(self):
-        rhythm = [(4, 4)]*(len(self.cf.pitches)-1)
+    def get_rhythm(self) -> list[tuple[int]]:
+        rhythm: list[tuple[int]] = [(4, 4)] * (len(self.cf.pitches) - 1)
         rhythm.append((8,))
         return rhythm
 
-    def get_ties(self):
-        return [False]*self.num_notes
-
-    """ VOICE INDEPENDENCE RULES """
-    """ MELODIC RULES """
-
-    """ HELP FUNCTIONS FOR INITIALIZING COUNTERPOINT"""
-
-    def get_harmonic_possibilities(self, idx, cf_note):
-        poss = super(SecondSpecies, self).get_consonant_possibilities(cf_note)
-        upbeats = self.get_upbeats()
-        if idx in upbeats:
-            if idx != 1:
-                for diss in HARMONIC_DISSONANT_INTERVALS:
-                    if self.ctp_position == "above":
-                        if cf_note+diss in self.scale_pitches:
-                            poss.append(cf_note+diss)
-                    else:
-                        if cf_note-diss in self.scale_pitches:
-                            poss.append(cf_note-diss)
-        return poss
-
-    def _possible_notes(self):
-        poss = [None for elem in range(self.num_notes)]
-        i = 0
-        for m in range(len(self.get_rhythm())):
-            for n in range(len(self.get_rhythm()[m])):
-                if m == 0:
-                    # First measure. start notes
-                    if n == 0:
-                        poss[i] = [-1]
-                    else:
-                        poss[i] = self._start_notes()
-                elif m == len(self.get_rhythm()) - 2 and n == 1:
-                    # penultimate note before last measure.
-                    poss[i] = self._penultimate_notes(self.cf.pitches[-1])
-                elif m == len(self.get_rhythm())-1:
-                    # Last measure
-                    poss[i] = self._end_notes()
-                else:
-                    poss[i] = self.get_harmonic_possibilities(i, self.cf.pitches[m])
-                i += 1
-        return poss
-
-
-class ThirdSpecies(Counterpoint):
-    def __init__(self, cf, ctp_position="above"):
-        super(ThirdSpecies, self).__init__(cf, ctp_position)
-        self.species = "third"
-        self.ERROR_THRESHOLD = 100
-        self.melody.set_rhythm(self.get_rhythm())
-        self.num_notes = sum(len(row) for row in self.get_rhythm())
-        self.melody.set_ties(self.get_ties())
-        self.search_domain = self._possible_notes()
-        self.melody.set_melody(self.randomize_ctp_melody())
-
-    """ HELP FUNCTIONS"""
-
-    def get_downbeats(self):
-        indices = list(range(len(self.cf.pitches)))*4
-        return indices[::2]
-
-    def get_upbeats(self):
-        indices = list(range(len(self.cf.pitches)))*4
-        return indices[1::2]
-
-    """ RHYTHMIC RULES """
-
-    def get_rhythm(self):
-        rhythm = [(2, 2, 2, 2)] * (len(self.cf.pitches) - 1)
-        rhythm.append((8,))
-        return rhythm
-
-    def get_ties(self):
+    def get_ties(self) -> list[bool]:
         return [False] * self.num_notes
 
     """ VOICE INDEPENDENCE RULES """
@@ -614,9 +565,9 @@ class ThirdSpecies(Counterpoint):
 
     """ HELP FUNCTIONS FOR INITIALIZING COUNTERPOINT"""
 
-    def get_harmonic_possibilities(self, idx, cf_note):
-        poss = super(ThirdSpecies, self).get_consonant_possibilities(cf_note)
-        upbeats = self.get_upbeats()
+    def get_harmonic_possibilities(self, idx: int, cf_note: int) -> list[int]:
+        poss: list[int] = super(SecondSpecies, self).get_consonant_possibilities(cf_note)
+        upbeats: list[int] = self.get_upbeats()
         if idx in upbeats:
             if idx != 1:
                 for diss in HARMONIC_DISSONANT_INTERVALS:
@@ -628,9 +579,85 @@ class ThirdSpecies(Counterpoint):
                             poss.append(cf_note - diss)
         return poss
 
-    def _possible_notes(self):
-        poss = [None for elem in range(self.num_notes)]
-        i = 0
+    def _possible_notes(self) -> list[list[int]]:
+        poss: list[list[int]] = [None for _ in range(self.num_notes)]
+        i: int = 0
+        for m in range(len(self.get_rhythm())):
+            for n in range(len(self.get_rhythm()[m])):
+                if m == 0:
+                    # First measure. start notes
+                    if n == 0:
+                        poss[i] = [-1]
+                    else:
+                        poss[i] = self._start_notes()
+                elif m == len(self.get_rhythm()) - 2 and n == 1:
+                    # penultimate note before last measure.
+                    poss[i] = self._penultimate_notes(self.cf.pitches[-1])
+                elif m == len(self.get_rhythm()) - 1:
+                    # Last measure
+                    poss[i] = self._end_notes()
+                else:
+                    poss[i] = self.get_harmonic_possibilities(i, self.cf.pitches[m])
+                i += 1
+        return poss
+
+
+class ThirdSpecies(Counterpoint):
+    def __init__(self, cf: CantusFirmus, ctp_position: str = "above"):
+        super(ThirdSpecies, self).__init__(cf, ctp_position)
+        self.species: str = "third"
+        self.melody.set_rhythm(self.get_rhythm())
+        self.num_notes: int = sum(len(row) for row in self.get_rhythm())
+        self.melody.set_ties(self.get_ties())
+        self.search_domain: list[list[int]] = self._possible_notes()
+        self.melody.set_melody(self.randomize_ctp_melody())
+
+    @property
+    def ERROR_THRESHOLD(self) -> int:
+        return 100
+
+    """ HELP FUNCTIONS"""
+
+    def get_downbeats(self) -> list[int]:
+        indices: list[int] = list(range(len(self.cf.pitches)))*4
+        return indices[::2]
+
+    def get_upbeats(self) -> list[int]:
+        indices: list[int] = list(range(len(self.cf.pitches)))*4
+        return indices[1::2]
+
+    """ RHYTHMIC RULES """
+
+    def get_rhythm(self) -> list[tuple[int]]:
+        rhythm: list[tuple[int]] = [(2, 2, 2, 2)] * (len(self.cf.pitches) - 1)
+        rhythm.append((8,))
+        return rhythm
+
+    def get_ties(self) -> list[bool]:
+        return [False] * self.num_notes
+
+    """ VOICE INDEPENDENCE RULES """
+    """ MELODIC RULES """
+
+    """ HELP FUNCTIONS FOR INITIALIZING COUNTERPOINT"""
+
+    def get_harmonic_possibilities(self, idx: int, cf_note: int) -> list[int]:
+        poss: list[int] = super(ThirdSpecies, self).get_consonant_possibilities(cf_note)
+        upbeats: list[int] = self.get_upbeats()
+        if idx in upbeats:
+            if idx != 1:
+                for diss in HARMONIC_DISSONANT_INTERVALS:
+                    if self.ctp_position == "above":
+                        if cf_note + diss in self.scale_pitches:
+                            poss.append(cf_note + diss)
+                    else:
+                        if cf_note - diss in self.scale_pitches:
+                            poss.append(cf_note - diss)
+        return poss
+
+    def _possible_notes(self) -> list[list[int]]:
+        poss: list[list[int]] = [None for _ in range(self.num_notes)]
+        i: int = 0
         for m in range(len(self.get_rhythm())):
             for n in range(len(self.get_rhythm()[m])):
                 if m == 0 and n in [0, 1]:
@@ -652,27 +679,30 @@ class ThirdSpecies(Counterpoint):
 
 
 class FourthSpecies(Counterpoint):
-    def __init__(self, cf, ctp_position="above"):
+    def __init__(self, cf: CantusFirmus, ctp_position: str = "above"):
         super(FourthSpecies, self).__init__(cf, ctp_position)
-        self.species = "fourth"
-        self.ERROR_THRESHOLD = 25
+        self.species: str = "fourth"
         self.melody.set_rhythm(self.get_rhythm())
-        self.num_notes = sum(len(row) for row in self.get_rhythm())
+        self.num_notes: int = sum(len(row) for row in self.get_rhythm())
         self.melody.set_ties(self.get_ties())
-        self.search_domain = self._possible_notes()
+        self.search_domain: list[list[int]] = self._possible_notes()
         self.melody.set_melody(self.randomize_ctp_melody())
+
+    @property
+    def ERROR_THRESHOLD(self) -> int:
+        return 25
 
     """ HELP FUNCTIONS"""
 
     """ RHYTHMIC RULES """
 
-    def get_rhythm(self):
-        rhythm = [(4, 4)] * (self.cf.length - 1)
+    def get_rhythm(self) -> list[tuple[int]]:
+        rhythm: list[tuple[int]] = [(4, 4)] * (self.cf.length - 1)
         rhythm.append((8,))
         return rhythm
 
-    def get_ties(self):
-        ties = []
+    def get_ties(self) -> list[bool]:
+        ties: list[bool] = []
         for i in range(self.num_notes-2):
             if i % 2 == 0:
                 ties.append(False)
@@ -687,13 +717,13 @@ class FourthSpecies(Counterpoint):
 
     """ HELP FUNCTIONS FOR INITIALIZING COUNTERPOINT"""
 
-    def get_harmonic_possibilities(self, idx, cf_note):
-        poss = super(FourthSpecies, self).get_consonant_possibilities(cf_note)
+    def get_harmonic_possibilities(self, idx: int, cf_note: int) -> list[int]:
+        poss: list[int] = super(FourthSpecies, self).get_consonant_possibilities(cf_note)
         return poss
 
-    def _possible_notes(self):
-        poss = [None for elem in range(self.num_notes)]
-        i = 0
+    def _possible_notes(self) -> list[list[int]]:
+        poss: list[list[int]] = [None for _ in range(self.num_notes)]
+        i: int = 0
         for m in range(len(self.get_rhythm())):
             for n in range(len(self.get_rhythm()[m])):
                 if m == 0:
@@ -715,24 +745,27 @@ class FourthSpecies(Counterpoint):
 
 
 class FifthSpecies(Counterpoint):
-    def __init__(self, cf, ctp_position="above"):
+    def __init__(self, cf: CantusFirmus, ctp_position: str = "above"):
         super(FifthSpecies, self).__init__(cf, ctp_position)
-        self.species = "fifth"
-        self.ERROR_THRESHOLD = 100
+        self.species: str = "fifth"
         self.melody.set_rhythm(self.get_rhythm())
-        self.rhythm = self.melody.get_rhythm()
-        self.num_notes = sum(len(row) for row in self.rhythm)
+        self.rhythm: list[tuple[int]] = self.melody.get_rhythm()
+        self.num_notes: int = sum(len(row) for row in self.rhythm)
         self.melody.set_ties(self.get_ties())
-        self.search_domain = self._possible_notes()
+        self.search_domain: list[list[int]] = self._possible_notes()
         self.melody.set_melody(self.randomize_ctp_melody())
+
+    @property
+    def ERROR_THRESHOLD(self) -> int:
+        return 100
 
     """ RHYTHMIC RULES """
 
-    def get_rhythm(self):
-        rhythm = []
-        measure_rhythms = [(2, 2, 2, 2), (4, 2, 2), (2, 2, 4), (4, 4),
-                           (2, 1, 1, 2, 2), (2, 1, 1, 4), (4, 2, 1, 1), (2, 2, 2, 1, 1), (2, 1, 1, 2, 2)]
-        rhythmic_weights = [75, 75, 75, 75, 10, 5, 5, 5, 5]
+    def get_rhythm(self) -> list[tuple[int]]:
+        rhythm: list[tuple[int]] = []
+        measure_rhythms: list[tuple[int]] = [(2, 2, 2, 2), (4, 2, 2), (2, 2, 4), (4, 4),
+                                             (2, 1, 1, 2, 2), (2, 1, 1, 4), (4, 2, 1, 1), (2, 2, 2, 1, 1), (2, 1, 1, 2, 2)]
+        rhythmic_weights: list[int] = [75, 75, 75, 75, 10, 5, 5, 5, 5]
         for measures in range(len(self.cf.pitches)-1):
             if measures == 0:
                 rhythm.append((4, 4))
@@ -741,9 +774,9 @@ class FifthSpecies(Counterpoint):
         rhythm.append((8,))
         return rhythm
 
-    def get_ties(self):
-        rhythm = self.rhythm
-        ties = []
+    def get_ties(self) -> list[bool]:
+        rhythm: list[tuple[int]] = self.rhythm
+        ties: list[bool] = []
         for m in range(len(rhythm)-1):
             for n in range(len(rhythm[m])):
                 if m == 0 and n == 1:
@@ -764,13 +797,13 @@ class FifthSpecies(Counterpoint):
 
     """ HELP FUNCTIONS FOR INITIALIZING COUNTERPOINT"""
 
-    def get_harmonic_possibilities(self, m, n, cf_note):
-        add_diss = False
+    def get_harmonic_possibilities(self, m: int, n: int, cf_note: int) -> list[int]:
+        add_diss: bool = False
         if self.rhythm[m][n] == 1:
             add_diss = True
         if sum(self.rhythm[m][:n]) in [2, 6]:
             add_diss = True
-        poss = super(FifthSpecies, self).get_consonant_possibilities(cf_note)
+        poss: list[int] = super(FifthSpecies, self).get_consonant_possibilities(cf_note)
         if add_diss:
             for diss in HARMONIC_DISSONANT_INTERVALS:
                 if self.ctp_position == "above":
@@ -781,9 +814,9 @@ class FifthSpecies(Counterpoint):
                         poss.append(cf_note - diss)
         return poss
 
-    def _possible_notes(self):
-        poss = [None for elem in range(self.num_notes)]
-        i = 0
+    def _possible_notes(self) -> list[list[int]]:
+        poss: list[list[int]] = [None for _ in range(self.num_notes)]
+        i: int = 0
         for m in range(len(self.rhythm)):
             for n in range(len(self.rhythm[m])):
                 if m == 0:
@@ -804,8 +837,8 @@ class FifthSpecies(Counterpoint):
         return poss
 
 
-def _get_indices(ctp_len, idx, n_window):
-    s_w = []
+def _get_indices(ctp_len: int, idx: int, n_window: int) -> list[int]:
+    s_w: list[int] = []
     for i in range(n_window):
         if idx + i < ctp_len:
             s_w.append(idx + i)
@@ -815,96 +848,90 @@ def _get_indices(ctp_len, idx, n_window):
     return [s_w[0], s_w[-1]]
 
 
-def _path_search(ctp, search_window):
-    paths = []
-    ctp_draft = ctp.ctp.melody.copy()
-    poss = ctp.search_domain
-    for i in itertools.product(*poss[search_window[0]:search_window[1]+1]):
+def _path_search(ctp: Counterpoint, search_window: list[int]) -> tuple[list[int], float, list[str]]:
+    paths: list[list[int]] = []
+    ctp_draft: list[int] = ctp.melody.get_melody().copy()
+    poss: list[list[int]] = ctp.search_domain
+    for i in itertools.product(*poss[search_window[0]:search_window[1] + 1]):
         paths.append(list(i))
-    ctp_draft[search_window[0]:search_window[1]+1] = paths[0]
-    best_ctp = ctp_draft.copy()
-    best_local_error = math.inf
-    best_error_list = []
+    ctp_draft[search_window[0]:search_window[1] + 1] = paths[0]
+    best_ctp: list[int] = ctp_draft.copy()
+    best_local_error: float = math.inf
+    best_error_list: list[str] = []
     for path in paths:
         ctp_draft[search_window[0]:search_window[1] + 1] = path
-        ctp.ctp.set_melody(ctp_draft)
-        enforced_constrains = Constraints(ctp)
-        local_error = enforced_constrains.get_penalty()
-        ctp_errors = enforced_constrains.get_errors()
-        weighted_indices = enforced_constrains.get_weighted_indices()
+        ctp.melody.set_melody(ctp_draft)
+        enforced_constraints = Constraints(ctp)
+        local_error: float = enforced_constraints.get_penalty()
+        ctp_errors: list[str] = enforced_constraints.get_errors()
+        weighted_indices: list[int] = enforced_constraints.get_weighted_indices()
         if local_error < best_local_error:
             best_ctp = ctp_draft.copy()
-            ctp.ctp.set_melody(best_ctp)
+            ctp.melody.set_melody(best_ctp)
             best_local_error = local_error
             best_error_list = ctp_errors
     return best_ctp.copy(), best_local_error, best_error_list
 
 
-def search(ctp):
-    error = math.inf
-    best_scan_error = math.inf
-    j = 1
-    best_ctp = ctp.ctp.melody.copy()
-    best_error_list = []
+def search(ctp: Counterpoint) -> tuple[float, list[int], list[str]]:
+    error: float = math.inf
+    best_scan_error: float = math.inf
+    j: int = 1
+    best_ctp: list[int] = ctp.melody.get_melody().copy()
+    best_error_list: list[str] = []
     while error >= ctp.ERROR_THRESHOLD and j <= ctp.MAX_SEARCH_WIDTH:
-        error_window = math.inf
-        for i in range(len(ctp.ctp.melody)):
-            window_n = _get_indices(len(ctp.ctp.melody), i, 2)
+        error_window: float = math.inf
+        for i in range(len(ctp.melody.get_melody())):
+            window_n: list[int] = _get_indices(len(ctp.melody.get_melody()), i, 2)
             ctp_draft, error, list_of_errors = _path_search(ctp, window_n)
             if i == 0:
                 error_window = error
             if error < best_scan_error:
                 best_ctp = ctp_draft.copy()
-                ctp.ctp.set_melody(best_ctp)
+                ctp.melody.set_melody(best_ctp)
                 best_scan_error = error
                 best_error_list = list_of_errors
                 if error < ctp.ERROR_THRESHOLD:
                     return best_scan_error, best_ctp, best_error_list
-
-            """ steps_since_improvement += 1
-            if steps_since_improvement >= len(ctp.ctp.melody):
-                ctp.ctp.set_melody(ctp.randomize_ctp_melody())
-                steps_since_improvement = 0
-                j = 1"""
-        ctp.ctp.set_melody(best_ctp)
+        ctp.melody.set_melody(best_ctp)
         if error_window >= best_scan_error:
             j += 1
     return best_scan_error, best_ctp, best_error_list
 
 
-def brute_force(ctp):
-    penalty = math.inf
-    errors = []
+def brute_force(ctp: Counterpoint) -> tuple[float, list[int], list[str]]:
+    penalty: float = math.inf
+    errors: list[str] = []
     while penalty > ctp.ERROR_THRESHOLD:
-        ctp.ctp.set_melody(ctp.randomize_ctp_melody())
-        enforced_constrains = Constraints(ctp)
-        local_error = enforced_constrains.get_penalty()
-        ctp_errors = enforced_constrains.get_errors()
+        ctp.melody.set_melody(ctp.randomize_ctp_melody())
+        enforced_constraints = Constraints(ctp)
+        local_error: float = enforced_constraints.get_penalty()
+        ctp_errors: list[str] = enforced_constraints.get_errors()
         penalty = local_error
         errors = ctp_errors
-    return penalty, ctp.ctp.melody, errors
+    return penalty, ctp.melody.get_melody(), errors
 
 
-def best_first_search(ctp, weighted_idx):
-    search_domain = ctp.search_domain
-    search_ctp = ctp.melody.get_melody()
-    best_global_ctp = search_ctp.copy()
-    best_global_error = math.inf
-    best_global_weighted_indices = []
+def best_first_search(ctp: Counterpoint, weighted_idx: list[int] | dict[int, float]) -> tuple[float, list[int], list[int]]:
+    search_domain: list[list[int]] = ctp.search_domain
+    search_ctp: list[int] = ctp.melody.get_melody()
+    best_global_ctp: list[int] = search_ctp.copy()
+    best_global_error: float = math.inf
+    best_global_weighted_indices: list[int] = []
     if isinstance(weighted_idx, list):
-        idx = weighted_idx
+        idx: list[int] = weighted_idx
     else:
         idx = list(weighted_idx.keys())
     for i in idx:
-        best_note = search_domain[i][0]
-        local_error = math.inf
-        local_weighted_indices = []
+        best_note: int = search_domain[i][0]
+        local_error: float = math.inf
+        local_weighted_indices: list[int] = []
         for j in range(len(search_domain[i])):
             search_ctp[i] = search_domain[i][j]
             ctp.melody.set_melody(search_ctp.copy())
             constrained = Constraints(ctp)
-            error = constrained.cost_function()
-            weighted_indices = constrained.get_weighted_indices()
+            error: float = constrained.cost_function()
+            weighted_indices: list[int] = constrained.get_weighted_indices()
             if error <= local_error:
                 best_note = search_domain[i][j]
                 local_error = error
@@ -917,15 +944,15 @@ def best_first_search(ctp, weighted_idx):
     return best_global_error, best_global_ctp, best_global_weighted_indices
 
 
-def improved_search(ctp: Counterpoint):
-    start_time = time.time()
-    penalty = math.inf
-    elapsed_time = time.time()-start_time
-    best_ctp = ctp.melody.get_melody()
-    lowest_penalty = math.inf
-    weighted_idx = [i for i in range(len(best_ctp))]
-    prev_penalty = penalty
-    randomize_idx = 1
+def improved_search(ctp: Counterpoint) -> tuple[float, list[int], list[str]]:
+    start_time: float = time.time()
+    penalty: float = math.inf
+    elapsed_time: float = time.time() - start_time
+    best_ctp: list[int] = ctp.melody.get_melody()
+    lowest_penalty: float = math.inf
+    weighted_idx: list[int] = [i for i in range(len(best_ctp))]
+    prev_penalty: float = penalty
+    randomize_idx: int = 1
     while penalty >= ctp.ERROR_THRESHOLD and elapsed_time < ctp.MAX_SEARCH_TIME:
         penalty, ctp_notes, weighted_idx = best_first_search(ctp, weighted_idx)
         if penalty == prev_penalty:  # no improvement
@@ -934,7 +961,7 @@ def improved_search(ctp: Counterpoint):
                 ctp_notes[weighted_idx[i]] = rm.choice(ctp.search_domain[weighted_idx[i]])
             rm.shuffle(weighted_idx)
             ctp.melody.set_melody(ctp_notes)
-            if randomize_idx != len(best_ctp)-1:
+            if randomize_idx != len(best_ctp) - 1:
                 randomize_idx += 1
         if penalty < lowest_penalty:
             randomize_idx = 1
@@ -942,9 +969,9 @@ def improved_search(ctp: Counterpoint):
             ctp.melody.set_melody(best_ctp)
             lowest_penalty = penalty
             weighted_idx = weighted_idx
-        elapsed_time = time.time()-start_time
+        elapsed_time = time.time() - start_time
         prev_penalty = penalty
     constraint = Constraints(ctp)
     lowest_penalty = constraint.cost_function()
-    lowest_error_list = constraint.get_errors()
+    lowest_error_list: list[str] = constraint.get_errors()
     return lowest_penalty, best_ctp, lowest_error_list
