@@ -247,7 +247,7 @@ class Note:
     """A piano note is a representation of a note on the piano, with a note name and an octave
     The convention being middle C is C4. The lowest note is A0 and the highest note is C8.
 
-    If the note is time agnostic, then the duration and offset is timed with respect to quarter length,
+    If the note is in real time, then the duration and offset is timed with respect to quarter length,
     otherwise it is timed with respect to real-time seconds."""
     index: int
     octave: int
@@ -331,7 +331,7 @@ class Note:
         sharps = reduce(lambda x, y: x + 1 if y == "#" else x - 1, alter, 0)
         assert pitch_name in ("C", "D", "E", "F", "G", "A", "B"), f"Step must be one of CDEFGAB, but found {pitch_name}" # to pass the typechecker
         return cls(
-            index=step_alter_to_lof_index(pitch_name, sharps),
+            index=_step_alter_to_lof_index(pitch_name, sharps),
             octave=int(octave),
             duration=duration,
             offset=offset,
@@ -351,7 +351,7 @@ class Note:
         # If this note does not come from an active site, then the offset is (conveniently) 0
         offset = note.offset
         return cls(
-            index=step_alter_to_lof_index(step, int(alter)),
+            index=_step_alter_to_lof_index(step, int(alter)),
             octave=octave,
             duration=float(duration),
             offset=float(offset),
@@ -423,16 +423,16 @@ class PianoRoll:
                 hop_length=1,
             )
 
-def step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], alter: int) -> int:
+def _step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], alter: int) -> int:
     return {"C": 0, "D": 2, "E": 4, "F": -1, "G": 1, "A": 3, "B": 5}[step] + 7 * alter
 
 def _convert_midi_to_wav(input_path: str, output_path: str, soundfont_path="~/.fluidsynth/default_sound_font.sf2", sample_rate=44100, verbose=False):
-    assert is_package_installed("fluidsynth"), "You need to install fluidsynth to convert midi to audio, refer to README for more details"
+    assert _is_package_installed("fluidsynth"), "You need to install fluidsynth to convert midi to audio, refer to README for more details"
     subprocess.call(['fluidsynth', '-ni', soundfont_path, input_path, '-F', output_path, '-r', str(sample_rate)],
         stdout=subprocess.DEVNULL if not verbose else None,
         stderr=subprocess.DEVNULL if not verbose else None)
 
-def is_package_installed(package_name):
+def _is_package_installed(package_name):
     if os.name == "nt":
         raise NotSupportedOnWindows(f"The package ``{package_name}`` is not supported in Windows")
     try:
@@ -534,15 +534,20 @@ def _midi_to_notes_real_time(midi_path: str) -> list[Note]:
 
     return notes
 
-def _check_pianoroll_fail_reason(array: NDArray):
+def _check_pianoroll_fail_reason(array: NDArray, raise_error: bool = False) -> typing.Optional[str]:
+    def _error(error_message: str):
+        if raise_error:
+            raise ValueError(error_message)
+        return error_message
+
     if not array.shape == 2:
-        return "Pianoroll must have 2 dimensions"
+        return _error("Pianoroll must have 2 dimensions")
 
     if not array.shape[1] == 90:
-        return "Pianoroll must have 90 features"
+        return _error("Pianoroll must have 90 features")
 
     if not np.all(array >= 0) or not np.all(array <= 1):
-        return "Pianoroll must be between 0 and 1"
+        return _error("Pianoroll must be between 0 and 1")
 
     # Note - Velocity pairs
     note_on_dict = {}
@@ -553,8 +558,8 @@ def _check_pianoroll_fail_reason(array: NDArray):
             if array[i, note] == 0 and note in note_on_dict:
                 note_on_dict.pop(note)
             elif array[i, note] > 0 and note in note_on_dict:
-                if not np.isclose(array[i, note], expected_velocity):
-                    return f"Note {note} (t = {i}) has a velocity of {array[i, note]} but expected {note_on_dict[note]}"
+                if not np.isclose(array[i, note], note_on_dict[note]):
+                    return _error(f"Note {note} (t = {i}) has a velocity of {array[i, note]} but expected {note_on_dict[note]}")
             elif array[i, note] > 0 and note not in note_on_dict:
                 note_on_dict[note] = array[i, note]
     return None
@@ -644,16 +649,11 @@ def notes_to_score(notes: list[Note]) -> m21.stream.Score:
         part.makeRests(inPlace=True, fillGaps=True)
     return score
 
-def notes_to_audio(notes: list[Note], sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
-    """Converts a list of notes to audio. This function will convert the notes to a midi file and then to audio."""
-    score = notes_to_score(notes)
-    return score_to_audio(score, sample_rate, soundfont_path)
-
 def notes_to_pianoroll(notes: list[Note], resolution: int = 24, eps: float = 1e-6) -> PianoRoll:
-    """Converts a list of notes to a pianoroll. A time agnostic list of notes will be converted to a time agnostic pianoroll and vice versa."""
+    """Converts a list of notes to a pianoroll. A real-timed list of notes will be converted to a real-timed pianoroll and vice versa."""
     if not notes:
         raise ValueError("Cannot convert an empty list of notes to a pianoroll")
-    assert all(note.real_time == notes[0].real_time for note in notes), "All notes must have the same time agnostic property"
+    assert all(note.real_time == notes[0].real_time for note in notes), "All notes must have the same timing property"
 
     max_duration = max(note.offset + note.duration for note in notes)
     max_duration = int(max_duration * resolution) + 1
@@ -712,3 +712,28 @@ def notes_to_midi(notes: list[Note], fpath: str):
         current_time = time
 
     mid.save(fpath)
+
+def pianoroll_to_notes(pianoroll: PianoRoll) -> list[Note]:
+    """Converts a pianoroll to a list of notes. A list of notes with the same timing property will be returned."""
+    _check_pianoroll_fail_reason(pianoroll.piano_roll, raise_error = True)
+    array = pianoroll.piano_roll
+    note_on_dict = {}
+    total_time = array.shape[0]
+    notes: list[Note] = []
+    for i in range(total_time):
+        for note in range(90):
+            # Pedals are ignored - only process notes
+            if array[i, note] == 0 and note in note_on_dict:
+                start_time, velocity = note_on_dict.pop(note)
+                duration = i - start_time
+                note = Note.from_midi_number(
+                    midi_number=note + PIANO_A0,
+                    duration=duration / pianoroll.resolution,
+                    offset=start_time / pianoroll.resolution,
+                    real_time=pianoroll.real_time,
+                    velocity=int(velocity * 127)
+                )
+                notes.append(note)
+            elif array[i, note] > 0 and note not in note_on_dict:
+                note_on_dict[note] = (i, array[i, note])
+    return notes
