@@ -534,6 +534,31 @@ def _midi_to_notes_real_time(midi_path: str) -> list[Note]:
 
     return notes
 
+def _check_pianoroll_fail_reason(array: NDArray):
+    if not array.shape == 2:
+        return "Pianoroll must have 2 dimensions"
+
+    if not array.shape[1] == 90:
+        return "Pianoroll must have 90 features"
+
+    if not np.all(array >= 0) or not np.all(array <= 1):
+        return "Pianoroll must be between 0 and 1"
+
+    # Note - Velocity pairs
+    note_on_dict = {}
+    total_time = array.shape[0]
+    for i in range(total_time):
+        for note in range(88):
+            # Pedals are ignored - only process notes
+            if array[i, note] == 0 and note in note_on_dict:
+                note_on_dict.pop(note)
+            elif array[i, note] > 0 and note in note_on_dict:
+                if not np.isclose(array[i, note], expected_velocity):
+                    return f"Note {note} (t = {i}) has a velocity of {array[i, note]} but expected {note_on_dict[note]}"
+            elif array[i, note] > 0 and note not in note_on_dict:
+                note_on_dict[note] = array[i, note]
+    return None
+
 def midi_to_notes(midi_path: str, real_time: bool = True, normalize: bool = False) -> list[Note]:
     """Converts a midi file to a list of notes. If real_time is True, then the notes will be timed against real time in seconds.
 
