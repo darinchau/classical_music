@@ -31,17 +31,12 @@ PartName = typing.Literal["soprano", "alto", "tenor", "bass"]
 KEY_NAMES: list[KeyName] = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
 KEY_NAMES_SHARP: list[KeyName] = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-BASS_RANGE = range(40, 65)
-TENOR_RANGE = range(48, 73)
-ALTO_RANGE = range(53, 78)
-SOPRANO_RANGE = range(60, 85)
-
-BASS = 0
-TENOR = 1
-ALTO = 2
-SOPRANO = 3
-
-RANGES = (BASS_RANGE, TENOR_RANGE, ALTO_RANGE, SOPRANO_RANGE)
+RANGES = {
+    "bass": range(40, 65),
+    "tenor": range(48, 73),
+    "alto": range(53, 78),
+    "soprano": range(60, 85)
+}
 
 # intervals
 P1 = C = Tonic = Unison = 0
@@ -58,13 +53,6 @@ m7 = Bb = 10
 M7 = B = 11
 P8 = Octave = 12
 
-RANGES_NAMES = {
-    "bass": 0,
-    "tenor": 1,
-    "alto": 2,
-    "soprano": 3
-}
-
 MELODIC_CONSONANT_INTERVALS = [m2, M2, m3, M3, P4, P5, m6, Octave]
 MELODIC_INTERVALS = [Unison, m2, M2, m3, M3, P4, P5, m6, P8, -m2, -M2, -m3, -M3, -P4, -P5, -P8]
 HARMONIC_DISSONANT_INTERVALS = [m2, M2, P4, M7, m7, P8 + m2, P8 + M2]
@@ -80,6 +68,24 @@ def _get_midi_number(pitch: int | str) -> int:
     if isinstance(pitch, int):
         return pitch
     return Note.from_str(pitch).midi_number
+
+
+def _shift_part(part: PartName, shift: CtpPositionName) -> PartName:
+    match (part, shift):
+        case ("soprano", "below"):
+            return "alto"
+        case ("alto", "below"):
+            return "tenor"
+        case ("tenor", "below"):
+            return "bass"
+        case ("bass", "above"):
+            return "tenor"
+        case ("tenor", "above"):
+            return "alto"
+        case ("alto", "above"):
+            return "soprano"
+        case (_, _):
+            raise ValueError(f"Invalid shift: {part} {shift}")
 
 
 class Constraints:
@@ -784,7 +790,7 @@ class Melody:
             melody_rhythm: list[list[int]] | None = None,
             ties: list[bool] | None = None,
             start: int = 0,
-            voice_range: range = RANGES[ALTO]
+            voice_range: range = RANGES["alto"]
     ):
         self.key: KeyName = key
         self.scale_name: ScaleName = scale
@@ -871,9 +877,10 @@ class CantusFirmus(Melody):
             melody_notes: list[int] | None = None,
             melody_rhythm: list[list[int]] | None = None,
             start: int = 0,
-            voice_range: range = RANGES[ALTO],
+            part: PartName = "alto",
             randomizer: random.Random | None = None
     ):
+        voice_range = RANGES[part]
         super(CantusFirmus, self).__init__(
             key=key,
             scale=scale,
@@ -883,6 +890,7 @@ class CantusFirmus(Melody):
             start=start,
             voice_range=voice_range
         )
+        self.part: PartName = part
         self.cf_errors: list[str] = []
         self.rhythm: list[tuple[int]] = self._generate_rhythm()
         self.ties: list[bool] = [False] * len(self.rhythm)
@@ -913,7 +921,7 @@ class CantusFirmus(Melody):
         return penultimate_note
 
     def _get_leading_tones(self) -> int:
-        if self.scale_name is "minor":
+        if self.scale_name == "minor":
             leading_tone: int = self._start_note()[1] - 2
         else:
             leading_tone = self._start_note()[1] - 1
@@ -1065,7 +1073,7 @@ class CantusFirmus(Melody):
 
 class Counterpoint(ABC):
     def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
-        self.voice_range = RANGES[RANGES.index(cf.voice_range) + (1 if ctp_position == "above" else -1)]
+        self.voice_range = RANGES[_shift_part(cf.part, ctp_position)]
         self.melody = Melody(cf.key, cf.scale.scale_type, cf.bar_length, voice_range=self.voice_range)
         self.ctp_position: CtpPositionName = ctp_position
         self.scale_pitches: list[int] = self.melody.scale_pitches
@@ -1612,10 +1620,9 @@ class CounterpointGenerator(SongGenerator):
             self.key,
             self.scale_name,
             self.bar_length,
-            voice_range=RANGES[RANGES.index(self.cf_part)],
+            part=self.cf_part,
             randomizer=self.randomizer
         )
-        ctp: Counterpoint
         ctp: Counterpoint = {
             "first": FirstSpecies,
             "second": SecondSpecies,
