@@ -167,7 +167,7 @@ class Constraints:
         }
         if interval in interval_degrees:
             return interval_degrees[interval]
-        raise ValueError("Invalid interval: {}".format(interval))
+        return None
 
     def _is_large_leap(self, ctp_draft: list[int], idx: int):
         if idx == len(ctp_draft) - 1 or ctp_draft[idx] == -1:
@@ -890,13 +890,13 @@ class CantusFirmus(Melody):
             start=start,
             voice_range=voice_range
         )
+        self.randomizer = randomizer if randomizer is not None else random.Random()
         self.part: PartName = part
         self.cf_errors: list[str] = []
-        self.rhythm: list[tuple[int]] = self._generate_rhythm()
-        self.ties: list[bool] = [False] * len(self.rhythm)
-        self.pitches: list[int] = self._generate_cf()
+        self._rhythm = self._generate_rhythm()
+        self._ties = [False] * len(self.rhythm)
+        self._pitches = self._generate_cf()
         self.length: int = len(self.rhythm)
-        self.randomizer = randomizer if randomizer is not None else random.Random()
 
     def _start_note(self) -> tuple[list[int], int]:
         if self.key in KEY_NAMES:
@@ -927,13 +927,13 @@ class CantusFirmus(Melody):
             leading_tone = self._start_note()[1] - 1
         return leading_tone
 
-    def _generate_rhythm(self) -> list[tuple[int]]:
+    def _generate_rhythm(self) -> list[list[int]]:
         """
         Generates a random rhythm for the cantus firmus
         Empirically, 12 seems to be the most common, but the rhythm can be any length between 8 and 14
         """
         random_length: int = self.randomizer.choice(list(range(8, 15)) + [12] * 2)
-        return [(8,)] * random_length
+        return [[8]] * random_length
 
     def _is_step(self, note: int, prev_note: int) -> bool:
         return abs(prev_note - note) in [m2, M2]
@@ -1175,8 +1175,8 @@ class Counterpoint(ABC):
 
 
 class FirstSpecies(Counterpoint):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above"):
-        super(FirstSpecies, self).__init__(cf, ctp_position)
+    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
+        super(FirstSpecies, self).__init__(cf, ctp_position, randomizer=randomizer)
         self.melody.set_rhythm(self.get_rhythm())
         self.melody.set_ties(self.get_ties())
         self.search_domain: list[list[int]] = self._possible_notes()
@@ -1212,8 +1212,8 @@ class FirstSpecies(Counterpoint):
 
 
 class SecondSpecies(Counterpoint):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above"):
-        super(SecondSpecies, self).__init__(cf, ctp_position)
+    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
+        super(SecondSpecies, self).__init__(cf, ctp_position, randomizer=randomizer)
         self.melody.set_rhythm(self.get_rhythm())
         self.num_notes: int = sum(len(row) for row in self.get_rhythm())
         self.melody.set_ties(self.get_ties())
@@ -1283,8 +1283,8 @@ class SecondSpecies(Counterpoint):
 
 
 class ThirdSpecies(Counterpoint):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above"):
-        super(ThirdSpecies, self).__init__(cf, ctp_position)
+    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
+        super(ThirdSpecies, self).__init__(cf, ctp_position, randomizer=randomizer)
         self.melody.set_rhythm(self.get_rhythm())
         self.num_notes: int = sum(len(row) for row in self.get_rhythm())
         self.melody.set_ties(self.get_ties())
@@ -1353,8 +1353,8 @@ class ThirdSpecies(Counterpoint):
 
 
 class FourthSpecies(Counterpoint):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above"):
-        super(FourthSpecies, self).__init__(cf, ctp_position)
+    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
+        super(FourthSpecies, self).__init__(cf, ctp_position, randomizer=randomizer)
         self.melody.set_rhythm(self.get_rhythm())
         self.num_notes: int = sum(len(row) for row in self.get_rhythm())
         self.melody.set_ties(self.get_ties())
@@ -1410,8 +1410,8 @@ class FourthSpecies(Counterpoint):
 
 
 class FifthSpecies(Counterpoint):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above"):
-        super(FifthSpecies, self).__init__(cf, ctp_position)
+    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
+        super(FifthSpecies, self).__init__(cf, ctp_position, randomizer=randomizer)
         self.species: str = "fifth"
         self.melody.set_rhythm(self.get_rhythm())
         self.rhythm: list[list[int]] = self.melody.rhythm
