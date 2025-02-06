@@ -27,7 +27,7 @@ from mido import MidiFile, MidiTrack, Message
 from numpy.typing import NDArray
 from typing import Literal
 
-_PITCH_NAME_REGEX = re.compile(r"[CDEFGAB](x?#+|b+)?(-?[0-9]+)")
+_PITCH_NAME_REGEX = re.compile(r"([CDEFGAB])(#+|b+)?(-?[0-9]+)")
 PIANO_A0 = 21
 PIANO_C8 = 108
 _MUSIC21_SETUP = False
@@ -267,6 +267,7 @@ class Note:
         assert PIANO_A0 <= self.midi_number <= PIANO_C8, f"Note must be between A0 and C8, but found {self.midi_number}"
         assert self.duration >= 0, f"Duration must be greater than or equal to 0, but found {self.duration}"
         assert self.offset >= 0, f"Offset must be greater than or equal to 0, but found {self.offset}"
+        assert 0 <= self.velocity < 128, f"Velocity must be between 0 and 127, but found {self.velocity}"
 
     def __repr__(self):
         return f"Note({self.note_name}, duration={self.duration}, offset={self.offset}, velocity={self.velocity})"
@@ -308,8 +309,8 @@ class Note:
 
     @property
     def pitch_number(self):
-        """Returns the chromatic pitch number of the note. C is 0, D is 2, etc"""
-        return ([0, 2, 4, 5, 7, 9, 11][self.step_number] + self.alter) % 12
+        """Returns the chromatic pitch number of the note. C is 0, D is 2, etc. There are edge cases like B# returning 12 or Cb returning -1"""
+        return ([0, 2, 4, 5, 7, 9, 11][self.step_number] + self.alter)
 
     @property
     def midi_number(self):
@@ -333,7 +334,7 @@ class Note:
             velocity=self.velocity
         )
         new_octave = self.octave + compound
-        if draft_note.pitch_number < self.pitch_number:
+        if (draft_note.pitch_number % 12) < (self.pitch_number % 12):
             new_octave += 1
         return Note(
             index=new_index,
@@ -358,7 +359,8 @@ class Note:
         if "[" in note:
             note, rest = note.split("[")
             rest = rest.rstrip("]")
-            if "," in rest:
+            assert len(rest.split(",")) in (2, 3), f"Rest must have 2 or 3 elements, but found {len(rest.split(','))}"
+            if len(rest.split(",")) == 3:
                 duration, offset, velocity = rest.split(",")
                 duration = float(duration)
                 offset = float(offset)
@@ -372,9 +374,11 @@ class Note:
         if not match:
             # Add the implied octave
             match = _PITCH_NAME_REGEX.match(note + "4")
-            assert match, f"The name {note} is not a valid note name"
 
+        assert match and len(match.groups()) == 3, f"The name {note} is not a valid note name"
         pitch_name, alter, octave = match.groups()
+        if alter is None:
+            alter = ""
         alter = alter.replace("x", "##").replace("-", "b").replace("+", "#")
         sharps = reduce(lambda x, y: x + 1 if y == "#" else x - 1, alter, 0)
         assert pitch_name in ("C", "D", "E", "F", "G", "A", "B"), f"Step must be one of CDEFGAB, but found {pitch_name}"  # to pass the typechecker
@@ -554,8 +558,6 @@ def _midi_to_notes_real_time(midi_path: str) -> list[Note]:
                 tempo_changes.append((current_tick, msg.tempo))
             if msg.type in ['note_on', 'note_off']:
                 events.append((current_tick, msg.note, msg.type, msg.velocity))
-
-    del msg  # to apease the type checker
 
     tempo_changes.sort()
     events.sort()
