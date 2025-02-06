@@ -9,42 +9,38 @@ if TYPE_CHECKING:
 class Constraints:
     def __init__(self, ctp: Counterpoint):
         self.species = ctp.species
-        self.ctp = ctp.melody.get_melody()
-        self.short_cf = ctp.cf.get_melody()
-        self.ctp_rhythm = ctp.melody.get_rhythm()
+        self.ctp = ctp.melody.pitches
+        self.short_cf = ctp.cf.pitches
+        self.ctp_rhythm = ctp.melody.rhythm
         self.ctp_flat_rhythm = list(chain.from_iterable(self.ctp_rhythm))
         self.ctp_in_measure = self.convert_pitch_sequence_to_measures()
-        self.measure_idx = []
+        self.measure_idx: list[int] = []
         j = 0
         for i in range(len(self.ctp_rhythm)):
             self.measure_idx.append(j)
-            for k in range(len(self.ctp_rhythm[i])):
-                j += 1
+            j += len(self.ctp_rhythm[i])
         self.scale_pitches = ctp.scale_pitches
         self.cf_notes = self.extend_cf(ctp.cf.pitches.copy())
         self.cf_tonic = self.cf_notes[0]
-        self.ties = ctp.melody.get_ties()
+        self.ties = ctp.melody.ties
         self.ctp_position = ctp.ctp_position
-        self.ctp_errors = []
+        self.ctp_errors: list[str] = []
         self.start_idx = self._get_numb_start_idx()
         self.end_idx = [len(self.ctp)-1]
-        self.weighted_indices = {}
-        for i in range(len(self.ctp)):
-            self.weighted_indices[i] = 0
-        """ HELP FUNCTIONS """
+        self.weighted_indices = {i: 0 for i in range(len(self.ctp))}
 
-    def extend_cf(self, cf):
-        cf_extended = []
+    def extend_cf(self, cf: list[int]):
+        cf_extended: list[int] = []
         for m in range(len(self.ctp_rhythm)):
             for n in range(len(self.ctp_rhythm[m])):
                 cf_extended.append(cf[m])
         return cf_extended
 
     def convert_pitch_sequence_to_measures(self):
-        pitch_measures = []
+        pitch_measures: list[list[int]] = []
         i = 0
         for j in range(len(self.ctp_rhythm)):
-            measure = []
+            measure: list[int] = []
             for note_dur in range(len(self.ctp_rhythm[j])):
                 measure.append(self.ctp[i])
                 i += 1
@@ -52,10 +48,11 @@ class Constraints:
         return pitch_measures
 
     def _get_numb_start_idx(self):
-        if SPECIES[self.species] == 1:
+        if self.species == 1:
             return [0]
-        elif SPECIES[self.species] in [2, 3, 4, 5]:
+        elif self.species in [2, 3, 4, 5]:
             return [0, 1]
+        raise ValueError("Invalid species: {}".format(self.species))
 
     def motion(self, idx, upper_voice, lower_voice):
         if idx == 0 or upper_voice[0] == -1 or lower_voice[0] == -1:
@@ -70,48 +67,41 @@ class Constraints:
             return "oblique"
         elif sign(cf_dir) == sign(ctp_dir) and cf_dir != ctp_dir:
             return "similar"
-        else:
-            return "contrary"
+        return "contrary"
 
-    def _get_interval_degree(self, interval):
-        if interval == 0:
-            return "unison"
-        elif interval in [m2, M2]:
-            return "second"
-        elif interval in [m3, M3]:
-            return "third"
-        elif interval == P4:
-            return "fourth"
-        elif interval == P5:
-            return "fifth"
-        elif interval == d5:
-            return "d5"
-        elif interval in [m6, M6]:
-            return "sixth"
-        elif interval in [m7, M7]:
-            return "seventh"
-        elif interval == Octave:
-            return "octave"
-        elif interval in [Octave + m2, Octave + M2]:
-            return "ninth"
-        elif interval in [Octave + m3, Octave + M3]:
-            return "tenth"
+    def _get_interval_degree(self, interval: int):
+        interval_degrees = {
+            0: "unison",
+            m2: "second", M2: "second",
+            m3: "third", M3: "third",
+            P4: "fourth",
+            P5: "fifth",
+            d5: "d5",
+            m6: "sixth", M6: "sixth",
+            m7: "seventh", M7: "seventh",
+            Octave: "octave",
+            Octave + m2: "ninth", Octave + M2: "ninth",
+            Octave + m3: "tenth", Octave + M3: "tenth"
+        }
+        if interval in interval_degrees:
+            return interval_degrees[interval]
+        raise ValueError("Invalid interval: {}".format(interval))
 
-    def _is_large_leap(self, ctp_draft, idx):
+    def _is_large_leap(self, ctp_draft: list[int], idx: int):
         if idx == len(ctp_draft) - 1 or ctp_draft[idx] == -1:
             return False
         if abs(ctp_draft[idx + 1] - ctp_draft[idx]) >= P4:
             return True
         return False
 
-    def _is_small_leap(self, ctp_draft, idx):
+    def _is_small_leap(self, ctp_draft: list[int], idx: int):
         if idx == len(ctp_draft) - 1 or ctp_draft[idx] == -1:
             return False
         if abs(ctp_draft[idx + 1] - ctp_draft[idx]) in [m3, M3]:
             return True
         return False
 
-    def _is_step(self, ctp_draft, idx):
+    def _is_step(self, ctp_draft: list[int], idx: int):
         if idx == len(ctp_draft) - 1 or ctp_draft[idx] == -1:
             return False
         if abs(ctp_draft[idx + 1] - ctp_draft[idx]) in [m2, M2]:
@@ -129,9 +119,7 @@ class Constraints:
         indices = list(range(len(self.cf_notes)))
         return indices[1::2]
 
-    """ MELODIC RULES """
-
-    def _is_melodic_leap_too_large(self, ctp_draft, idx):
+    def _is_melodic_leap_too_large(self, ctp_draft: list[int], idx: int):
         if idx in self.end_idx or ctp_draft[idx] == -1:
             return False
         interval = ctp_draft[idx + 1] - ctp_draft[idx]
@@ -143,18 +131,15 @@ class Constraints:
             if abs(interval) == Octave:
                 return False
             return True
-        else:
-            return False
+        return False
 
-    def _is_melodic_leap_octave(self, ctp_draft, idx):
+    def _is_melodic_leap_octave(self, ctp_draft: list[int], idx: int):
         if idx in self.end_idx or ctp_draft[idx] == -1:
             return False
         interval = ctp_draft[idx + 1] - ctp_draft[idx]
-        if abs(interval) == Octave:
-            return True
-        return False
+        return abs(interval) == Octave
 
-    def _is_successive_same_direction_leaps(self, ctp_draft, idx):
+    def _is_successive_same_direction_leaps(self, ctp_draft: list[int], idx: int):
         if idx >= self.end_idx[0]-1 or ctp_draft[idx] == -1:
             return False
         interval1 = ctp_draft[idx + 1] - ctp_draft[idx]
@@ -168,7 +153,7 @@ class Constraints:
             return True
         return False
 
-    def _is_successive_leaps_valid(self, ctp_draft, idx):
+    def _is_successive_leaps_valid(self, ctp_draft: list[int], idx: int):
         if idx >= self.end_idx[0]-1 or ctp_draft[idx] == -1:
             return True
         interval1 = ctp_draft[idx + 1] - ctp_draft[idx]
@@ -184,7 +169,7 @@ class Constraints:
                     return False
         return True
 
-    def _is_leap_compensated(self, ctp_draft, idx):
+    def _is_leap_compensated(self, ctp_draft: list[int], idx: int):
         if idx >= self.end_idx[0] - 1 or ctp_draft[idx] == -1:
             return True
         interval1 = ctp_draft[idx + 1] - ctp_draft[idx]
@@ -198,43 +183,33 @@ class Constraints:
                 return False
         return True
 
-    def _is_octave_compensated(self, ctp_draft, idx):
+    def _is_octave_compensated(self, ctp_draft: list[int], idx: int):
         if idx >= self.end_idx[0] - 2 or ctp_draft[idx] == -1:
             return True
         interval1 = ctp_draft[idx + 1] - ctp_draft[idx]
         interval2 = ctp_draft[idx + 2] - ctp_draft[idx + 1]
         if self._is_melodic_leap_octave(ctp_draft, idx + 1):
-            if self._is_leap_compensated(ctp_draft, idx + 1) and sign(interval1) != sign(interval2):
-                return True
-            else:
-                return False
-        else:
-            return True
+            return self._is_leap_compensated(ctp_draft, idx + 1) and sign(interval1) != sign(interval2)
+        return True
 
-    def _is_chromatic_step(self, ctp_draft, idx):
+    def _is_chromatic_step(self, ctp_draft: list[int], idx: int):
         if idx >= self.end_idx[0] or ctp_draft[idx] == -1:
             return False
         if abs(ctp_draft[idx + 1] - ctp_draft[idx]) == 1 and ctp_draft[idx + 1] not in self.scale_pitches:
             return True
         return False
 
-    def _is_repeating_pitches(self, ctp_draft, idx):
+    def _is_repeating_pitches(self, ctp_draft: list[int], idx: int):
         if idx in self.end_idx:
             return False
         if ctp_draft[idx] == ctp_draft[idx + 1]:
-            if self.ties[idx] == True:
-                return False
-            else:
-                return True
+            return not self.ties[idx]
         return False
 
-    def _is_within_range_of_a_tenth(self, ctp_draft):
-        if max(ctp_draft) - min(ctp_draft[1:]) > Octave + M3:
-            return False
-        else:
-            return True
+    def _is_within_range_of_a_tenth(self, ctp_draft: list[int]):
+        return max(ctp_draft) - min(ctp_draft[1:]) <= Octave + M3
 
-    def _is_unique_climax(self, ctp_draft):
+    def _is_unique_climax(self, ctp_draft: list[int]):
         # Unique climax that is different from the cantus firmus or with sufficient spacing
         climax = max(ctp_draft)
         climax_measure_idx = []
@@ -254,25 +229,20 @@ class Constraints:
                 return False
         return True
 
-    def _is_leading_tone_properly_resolved(self, ctp_draft):
-        if abs(ctp_draft[-1] - ctp_draft[-2]) not in [m2, M2]:
-            return False
-        else:
-            return True
+    def _is_leading_tone_properly_resolved(self, ctp_draft: list[int]):
+        return abs(ctp_draft[-1] - ctp_draft[-2]) in [m2, M2]
 
-    """ SECOND SPECIES """
-
-    def _is_motivic_repetitions(self, ctp_draft, idx):
+    def _is_motivic_repetitions(self, ctp_draft: list[int], idx: int):
         if idx >= len(ctp_draft)-3:
             return False
         if ctp_draft[idx:idx + 2] == ctp_draft[idx + 2:idx + 4]:
             return True
         return False
 
-    def _melodic_rules(self, ctp_draft):
+    def _melodic_rules(self, ctp_draft: list[int]):
         penalty = 0
         # Index based rules
-        if SPECIES[self.species] >= 1:  # valid melodic rules for each species
+        if self.species >= 1:  # valid melodic rules for each species
             for i in range(len(ctp_draft)):
                 if self._is_melodic_leap_too_large(ctp_draft, i):
                     self.ctp_errors.append("Too large leap!")
@@ -319,14 +289,12 @@ class Constraints:
             if not self._is_leading_tone_properly_resolved(ctp_draft):
                 self.ctp_errors.append("leading tone not properly resolved!")
                 penalty += 100
-        if SPECIES[self.species] >= 2:
+        if self.species >= 2:
             for i in range(len(ctp_draft)):
                 if self._is_motivic_repetitions(ctp_draft, i):
                     self.ctp_errors.append("Motivic repetitions!")
                     penalty += 100
         return penalty
-
-    """ VOICE INDEPENDENCE RULES """
 
     def _is_perfect_interval_properly_approached(self, upper_voice, lower_voice, idx):
         # the start and end notes are allowed to be perfect
@@ -358,10 +326,7 @@ class Constraints:
         harm_int1 = upper_voice[idx] - lower_voice[idx]
         harm_int2 = upper_voice[idx + 1] - lower_voice[idx + 1]
         if harm_int1 in PERFECT_INTERVALS and harm_int2 in PERFECT_INTERVALS:
-            if self._is_step(upper_voice, idx) or self._is_step(lower_voice, idx):
-                return True
-            else:
-                return False
+            return self._is_step(upper_voice, idx) or self._is_step(lower_voice, idx)
         return True
 
     def _is_parallel_fourths(self, upper_voice, lower_voice, idx):
@@ -386,10 +351,7 @@ class Constraints:
         return False
 
     def _is_contrary_motion(self, upper_voice, lower_voice, idx):
-        if self.motion(idx, upper_voice, lower_voice) == "contrary":
-            return True
-        else:
-            return False
+        return self.motion(idx, upper_voice, lower_voice) == "contrary"
 
     def _is_valid_number_of_consecutive_intervals(self, upper_voice, lower_voice):
         valid = True
@@ -409,7 +371,7 @@ class Constraints:
         num = 0
         for i in range(1, len(ctp)-1):
             if ctp[i] == self.cf_tonic:
-                if SPECIES[self.species] in [3, 5]:
+                if self.species in [3, 5]:
                     if i in self.measure_idx:
                         num += 1
                     else:
@@ -418,10 +380,8 @@ class Constraints:
                     num += 1
         return num
 
-    """ SECOND SPECIES"""
-
     def _is_parallel_perfects_on_downbeats(self, ctp_draft, upper_voice, lower_voice):
-        if SPECIES[self.species] == 2 or SPECIES[self.species] == 4:
+        if self.species == 2 or self.species == 4:
             db = self.get_downbeats()
         else:
             db = self.get_firstbeats()
@@ -432,10 +392,7 @@ class Constraints:
                 # consecutive perfects on downbeats
                 if upper_voice[db[i + 1]] - upper_voice[db[i]] == lower_voice[db[i + 1]] - lower_voice[db[i]]:
                     # consecutive and parallel
-                    if ctp_draft[db[i]] - ctp_draft[db[i] + 1] > M3:
-                        return False
-                    else:
-                        return True
+                    return ctp_draft[db[i]] - ctp_draft[db[i] + 1] <= M3
                 return False
         return False
 
@@ -448,7 +405,7 @@ class Constraints:
             lower_voice = ctp_draft
         penalty = 0
         # Index based rules
-        if SPECIES[self.species] >= 1:  # valid rules for each species
+        if self.species >= 1:  # valid rules for each species
             for i in range(len(ctp_draft)):
                 if not self._is_perfect_interval_properly_approached(upper_voice, lower_voice, i):
                     self.ctp_errors.append(
@@ -482,34 +439,25 @@ class Constraints:
             if self._is_unisons_between_terminals(ctp_draft) > 0:
                 self.ctp_errors.append("Unison between terminals!")
                 penalty += 50 * self._is_unisons_between_terminals(ctp_draft)
-        if SPECIES[self.species] >= 2:
+        if self.species >= 2:
             if self._is_parallel_perfects_on_downbeats(ctp_draft, upper_voice, lower_voice):
                 self.ctp_errors.append(
                     "Parallel perfect intervals on downbeats!")
                 penalty += 100
         return penalty
 
-    """ DISSONANT RULES"""
-
     def _is_dissonant_interval(self, upper_voice, lower_voice, idx):
-        if upper_voice[idx]-lower_voice[idx] in HARMONIC_DISSONANT_INTERVALS:
-            return True
-        else:
-            return False
+        return (upper_voice[idx]-lower_voice[idx]) in HARMONIC_DISSONANT_INTERVALS
 
     def _is_dissonance_properly_left_and_approached(self, idx, ctp_draft):
         current_note = ctp_draft[idx]
         prev_note = ctp_draft[idx-1]
         next_note = ctp_draft[idx+1]
         if abs(next_note-current_note) <= M2 and abs(current_note-prev_note) <= M2:
-            if SPECIES[self.species] in [3, 5]:
+            if self.species in [3, 5]:
                 return True
-            if sign(next_note-current_note) == sign(next_note-current_note):
-                return True
-            else:
-                return False
-        else:
-            return False
+            return sign(next_note-current_note) == sign(next_note-current_note)
+        return False
 
     def _tied_note_properly_resolved(self, cf_notes, ctp_draft):
         penalty = 0
@@ -540,17 +488,14 @@ class Constraints:
         if idx in self.start_idx or idx in self.end_idx:
             return True
         if self.ctp_flat_rhythm[idx] != 1:
-            # not eight_note
+            # Not an eight note
             return True
-        if self._is_step(ctp_draft, idx) and self._is_step(ctp_draft, idx-1):
-            # The eight note is not approached or left by step
-            return True
-        else:
-            return False
+        # The eight note is not approached or left by step
+        return self._is_step(ctp_draft, idx) and self._is_step(ctp_draft, idx-1)
 
-    def _dissonance_handling(self, cf_notes, ctp_draft):
+    def _dissonance_rules(self, cf_notes, ctp_draft):
         penalty = 0
-        if SPECIES[self.species] == 1:
+        if self.species == 1:
             # In first species there is no dissonance,
             # so the allowed harmonic intervals are consonances
             return penalty
@@ -560,9 +505,9 @@ class Constraints:
         else:
             upper = cf_notes
             lower = ctp_draft
-        if SPECIES[self.species] in [2, 3, 5]:
+        if self.species in [2, 3, 5]:
             for i in range(1, len(ctp_draft)-1):
-                if SPECIES[self.species] in [3, 5] and self._is_cambiata(i, cf_notes, ctp_draft):
+                if self.species in [3, 5] and self._is_cambiata(i, cf_notes, ctp_draft):
                     # allowed
                     penalty += 0
                 elif self._is_dissonant_interval(upper, lower, i):
@@ -570,12 +515,12 @@ class Constraints:
                         self.ctp_errors.append(
                             "Dissonance not properly left or approached!")
                         penalty += 100
-        if SPECIES[self.species] == 5:
+        if self.species == 5:
             for i in range(1, len(ctp_draft)-1):
                 if not self._is_eight_note_handled(i, ctp_draft):
                     self.ctp_errors.append("eight notes not properly handled!")
                     penalty += 100
-        if SPECIES[self.species] in [4, 5]:
+        if self.species in [4, 5]:
             self.ctp_errors.append("tied notes not properly handled!")
             penalty += self._tied_note_properly_resolved(cf_notes, ctp_draft)
 
@@ -606,8 +551,6 @@ class Constraints:
                         return True
         return False
 
-    """ HARMONIC RULES """
-
     def _is_valid_terminals(self, ctp_draft, cf_notes):
         # check start and end pitches and see if they are valid
         # must begin and end with perfect consonances (octaves, fifths or unison)
@@ -618,19 +561,16 @@ class Constraints:
         else:
             idx = 0
         if self.ctp_position == "above":
-            if (ctp_draft[idx] - cf_notes[idx] not in [Unison, P5, Octave]) or (
-                    ctp_draft[-1] - cf_notes[-1] not in [Unison, Octave]):
-                return False
-            else:
-                return True
-        else:
-            if (cf_notes[idx] - ctp_draft[idx] not in [Unison, Octave]) or (
-                    cf_notes[-1] - ctp_draft[-1] not in [Unison, Octave]):
-                return False
-            else:
-                return True
+            return not (
+                (ctp_draft[idx] - cf_notes[idx] not in [Unison, P5, Octave]) or (
+                    ctp_draft[-1] - cf_notes[-1] not in [Unison, Octave])
+            )
+        return not (
+            (cf_notes[idx] - ctp_draft[idx] not in [Unison, Octave]) or (
+                cf_notes[-1] - ctp_draft[-1] not in [Unison, Octave])
+        )
 
-    def _no_outlined_tritone(self, ctp_draft):
+    def _no_outlined_tritone(self, ctp_draft: list[int]):
         outline_idx = [0]
         outline_intervals = []
         not_allowed_intervals = [Tritone]
@@ -654,26 +594,25 @@ class Constraints:
 
     def _harmonic_rules(self, ctp_draft, cf_notes):
         penalty = 0
-        if SPECIES[self.species] >= 1:  # valid harmonic rules for each species
+        if self.species >= 1:  # valid harmonic rules for each species
             if not self._is_valid_terminals(ctp_draft, cf_notes):
                 self.ctp_errors.append("Terminals not valid!")
                 penalty += 100
-        if SPECIES[self.species] in [3, 5]:
+        if self.species in [3, 5]:
             if not self._no_outlined_tritone(ctp_draft):
                 self.ctp_errors.append("Outlined dissonant interval!")
                 penalty += 50
         return penalty
 
-    """ TOTAL PENALTY"""
-
     def cost_function(self):
+        """Main cost function that calculates the total penalty"""
         penalty = 0
         self.ctp_errors = []
         ctp_draft = self.ctp
         cf_notes = self.cf_notes
         penalty += self._melodic_rules(ctp_draft)
         penalty += self._voice_independence_rules(ctp_draft, cf_notes)
-        penalty += self._dissonance_handling(cf_notes, ctp_draft)
+        penalty += self._dissonance_rules(cf_notes, ctp_draft)
         penalty += self._harmonic_rules(ctp_draft, cf_notes)
         return penalty
 
