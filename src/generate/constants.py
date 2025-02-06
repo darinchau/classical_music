@@ -1,26 +1,35 @@
 import math
+import typing
 
 
 def sign(x):
     return math.copysign(1, x)
 
 
+ScaleName = typing.Literal["major", "minor"]
+SpeciesName = typing.Literal["first", "second", "third", "fourth", "fifth"]
+KeyName = typing.Literal[
+    'C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B',
+    'C#', 'D#', 'F#', 'G#', 'A#',
+]
+CtpPositionName = typing.Literal["above", "below"]
+
 # Names and ranges
-KEY_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
-KEY_NAMES_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+KEY_NAMES: list[KeyName] = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
+KEY_NAMES_SHARP: list[KeyName] = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 SHARPS_IDX = [1, 3, 6, 8, 10]
 
-BASS_RANGE = list(range(40, 65))
-TENOR_RANGE = list(range(48, 73))
-ALTO_RANGE = list(range(53, 78))
-SOPRANO_RANGE = list(range(60, 85))
+BASS_RANGE = range(40, 65)
+TENOR_RANGE = range(48, 73)
+ALTO_RANGE = range(53, 78)
+SOPRANO_RANGE = range(60, 85)
 
 BASS = 0
 TENOR = 1
 ALTO = 2
 SOPRANO = 3
 
-RANGES = [BASS_RANGE, TENOR_RANGE, ALTO_RANGE, SOPRANO_RANGE]
+RANGES = (BASS_RANGE, TENOR_RANGE, ALTO_RANGE, SOPRANO_RANGE)
 
 # intervals
 P1 = C = Tonic = Unison = 0
@@ -37,12 +46,12 @@ m7 = Bb = 10
 M7 = B = 11
 P8 = Octave = 12
 
-NAMED_SCALES = {
+NAMED_SCALES: dict[ScaleName, tuple[int, ...]] = {
     "major": (2, 2, 1, 2, 2, 2, 1),
     "minor": (2, 1, 2, 2, 1, 2, 2),
 }
 
-SPECIES = {
+SPECIES: dict[SpeciesName, int] = {
     "first": 1,
     "second": 2,
     "third": 3,
