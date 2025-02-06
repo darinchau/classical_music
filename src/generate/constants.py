@@ -13,11 +13,11 @@ KeyName = typing.Literal[
     'C#', 'D#', 'F#', 'G#', 'A#',
 ]
 CtpPositionName = typing.Literal["above", "below"]
+PartName = typing.Literal["soprano", "alto", "tenor", "bass"]
 
 # Names and ranges
 KEY_NAMES: list[KeyName] = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
 KEY_NAMES_SHARP: list[KeyName] = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-SHARPS_IDX = [1, 3, 6, 8, 10]
 
 BASS_RANGE = range(40, 65)
 TENOR_RANGE = range(48, 73)
@@ -45,19 +45,6 @@ M6 = A = 9
 m7 = Bb = 10
 M7 = B = 11
 P8 = Octave = 12
-
-NAMED_SCALES: dict[ScaleName, tuple[int, ...]] = {
-    "major": (2, 2, 1, 2, 2, 2, 1),
-    "minor": (2, 1, 2, 2, 1, 2, 2),
-}
-
-SPECIES: dict[SpeciesName, int] = {
-    "first": 1,
-    "second": 2,
-    "third": 3,
-    "fourth": 4,
-    "fifth": 5,
-}
 
 RANGES_NAMES = {
     "bass": 0,

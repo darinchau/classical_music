@@ -4,27 +4,24 @@ import itertools
 import json
 import math
 import matplotlib.pyplot as plt
-import random as rm
+import random
 import re
 import time
 import typing
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from ..data import PIANO_A0, PIANO_C8, Note
 from .constants import *
 from .constraints import Constraints
+from .base import SongGenerator
 
 INFINITY = 1 << 64 - 1  # A big number for the search algorithm
 
 
-def _make_note(pitch: int | str) -> Note:
+def _get_midi_number(pitch: int | str) -> int:
     if isinstance(pitch, int):
-        return Note.from_midi_number(pitch)
-    return Note.from_str(pitch)
-
-
-def _check_key(key: str) -> KeyName:
-    assert key in KEY_NAMES or key in KEY_NAMES_SHARP, f"Invalid key: {key}"
-    return key
+        return pitch
+    return Note.from_str(pitch).midi_number
 
 
 class Scale:
@@ -35,42 +32,43 @@ class Scale:
     """
 
     def __init__(self, key: KeyName, scale: ScaleName, scale_range: range | None = None):
-        _check_key(key)
-
         # Get the lowest octave
         oct = 0 if key in ["A", "A#", "B", "Bb"] else 1
-        self.root: Note = _make_note(key + str(oct))  # sets the root of the scale in valid string format
+        self.root: int = _get_midi_number(key + str(oct))  # sets the root of the scale in valid string format
         self.key: KeyName = key
         self.scale_type: ScaleName = scale
         self.intervals = Scale.intervals_from_name(scale)
-        self.scale: list[Note] = self.build_scale()
+        self.scale: list[int] = self.build_scale()
         self.scale_pitches: list[int] = self.get_scale_pitches()
         if scale_range is not None:
             self.limit_range(scale_range)
 
     @staticmethod
     def intervals_from_name(scale_name: ScaleName) -> tuple[int, ...]:
-        return tuple(NAMED_SCALES[scale_name])
+        return tuple({
+            "major": (2, 2, 1, 2, 2, 2, 1),
+            "minor": (2, 1, 2, 2, 1, 2, 2),
+        }[scale_name])
 
-    def build_scale(self) -> list[Note]:
+    def build_scale(self) -> list[int]:
         """Builds the scale from the root note"""
-        start_pitch = self.root.midi_number
+        start_pitch = self.root
         scale_len = len(self.intervals)
         highest_possible_pitch = PIANO_C8
         lowest_possible_pitch = PIANO_A0
         j = 0
-        scale: list[Note] = []
+        scale: list[int] = []
         pitch = start_pitch
         # adds all possible values above the root pitch
         while pitch <= highest_possible_pitch:
-            scale.append(_make_note(pitch))
-            pitch = scale[j].midi_number + self.intervals[j % scale_len]
+            scale.append(_get_midi_number(pitch))
+            pitch = scale[j] + self.intervals[j % scale_len]
             j += 1
         # adds all possible values under the root pitch
         j = scale_len - 1
         pitch = start_pitch - self.intervals[j % scale_len]
         while pitch >= lowest_possible_pitch:
-            scale.insert(0, _make_note(pitch))
+            scale.insert(0, _get_midi_number(pitch))
             j -= 1
             pitch = pitch - self.intervals[j % scale_len]
         return scale
@@ -78,23 +76,23 @@ class Scale:
     def get_scale_pitches(self) -> list[int]:
         """Get the midi numbers of all notes in the scale"""
         scale_pitches: list[int] = []
-        for notes in self.scale:
-            scale_pitches.append(notes.midi_number)
+        for note in self.scale:
+            scale_pitches.append(note)
         return scale_pitches
 
     def get_scale_range(self, scale_range: list[int]) -> list[int]:
         """Limits the scale into the given scale range (computes the intersection) and returns the midi numbers"""
         scale_pitches: list[int] = []
-        for notes in scale_range:
-            if notes in self.scale_pitches:
-                scale_pitches.append(notes)
+        for note in scale_range:
+            if note in self.scale_pitches:
+                scale_pitches.append(note)
         return scale_pitches
 
     def limit_range(self, scale_range: typing.Sequence[int]) -> None:
-        scale: list[Note] = []
-        for notes in scale_range:
-            if notes in self.scale_pitches:
-                scale.append(_make_note(notes))
+        scale: list[int] = []
+        for note in scale_range:
+            if note in self.scale_pitches:
+                scale.append(_get_midi_number(note))
         self.scale = scale
 
     def set_time(self, duration: float) -> None:
@@ -154,6 +152,36 @@ class Melody:
     def get_end_time(self) -> float:
         raise NotImplementedError
 
+    def to_list_notes(self, start: float = 0.) -> list[Note]:
+        i = 0
+        measure = 0
+        t = start
+        notes: list[Note] = []
+        while measure < len(self.rhythm):
+            note_duration = 0
+            while note_duration < len(self.rhythm[measure]):
+                dur = self.rhythm[measure][note_duration]
+                duration = float(dur*self.bar_length / float(self.note_resolution))
+                if self.ties[i] == True:
+                    measure += 1
+                    note_duration = 0
+                    dur = self.rhythm[measure][note_duration]
+                    duration += float(dur*self.bar_length / float(self.note_resolution))
+                    i += 1
+                if self.pitches[i] != -1:
+                    note = Note.from_midi_number(
+                        self.pitches[i],
+                        duration=duration,
+                        offset=t,
+                        real_time=False,
+                    )
+                    notes.append(note)
+                t += duration
+                i += 1
+                note_duration += 1
+            measure += 1
+        return notes
+
 
 class CantusFirmus(Melody):
     PERFECT_INTERVALS: list[int] = [Unison, P5, Octave]
@@ -168,7 +196,8 @@ class CantusFirmus(Melody):
             melody_notes: list[int] | None = None,
             melody_rhythm: list[list[int]] | None = None,
             start: int = 0,
-            voice_range: range = RANGES[ALTO]
+            voice_range: range = RANGES[ALTO],
+            randomizer: random.Random | None = None
     ):
         super(CantusFirmus, self).__init__(
             key=key,
@@ -184,6 +213,7 @@ class CantusFirmus(Melody):
         self.ties: list[bool] = [False] * len(self.rhythm)
         self.pitches: list[int] = self._generate_cf()
         self.length: int = len(self.rhythm)
+        self.randomizer = randomizer if randomizer is not None else random.Random()
 
     def _start_note(self) -> tuple[list[int], int]:
         if self.key in KEY_NAMES:
@@ -204,7 +234,7 @@ class CantusFirmus(Melody):
         leading_tone: int = self._start_note()[1] - 1
         super_tonic: int = self._start_note()[1] + 2
         weights: list[float] = [0.1, 0.9]  # it is more common that the penultimate note is the supertonic than leading tone
-        penultimate_note: int = rm.choices([leading_tone, super_tonic], weights)[0]
+        penultimate_note: int = self.randomizer.choices([leading_tone, super_tonic], weights)[0]
         return penultimate_note
 
     def _get_leading_tones(self) -> int:
@@ -219,7 +249,7 @@ class CantusFirmus(Melody):
         Generates a random rhythm for the cantus firmus
         Empirically, 12 seems to be the most common, but the rhythm can be any length between 8 and 14
         """
-        random_length: int = rm.choice(list(range(8, 15)) + [12] * 2)
+        random_length: int = self.randomizer.choice(list(range(8, 15)) + [12] * 2)
         return [(8,)] * random_length
 
     def _is_step(self, note: int, prev_note: int) -> bool:
@@ -317,7 +347,7 @@ class CantusFirmus(Melody):
         end_note: int = start_note
         penultimate_note: int = self._penultimate_note()
         length: int = len(self.rhythm)
-        cf_shell: list[int] = [rm.choice(self.scale_pitches) for _ in range(length)]
+        cf_shell: list[int] = [self.randomizer.choice(self.scale_pitches) for _ in range(length)]
         cf_shell[0] = start_note
         cf_shell[-1] = end_note
         cf_shell[-2] = penultimate_note
@@ -329,7 +359,7 @@ class CantusFirmus(Melody):
             if prev_note+intervals in self.scale_pitches:
                 mel_cons.append(prev_note+intervals)
         # To further randomize the generated results, the melodic consonances are shuffled
-        rm.shuffle(mel_cons)
+        self.randomizer.shuffle(mel_cons)
         return mel_cons
 
     def _generate_cf(self) -> list[int]:
@@ -359,7 +389,7 @@ class CantusFirmus(Melody):
 
 
 class Counterpoint(ABC):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above"):
+    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
         self.voice_range = RANGES[RANGES.index(cf.voice_range) + (1 if ctp_position == "above" else -1)]
         self.melody = Melody(cf.key, cf.scale.scale_type, cf.bar_length, voice_range=self.voice_range)
         self.ctp_position: CtpPositionName = ctp_position
@@ -367,6 +397,7 @@ class Counterpoint(ABC):
         self.cf: CantusFirmus = cf
         self.search_domain: list[list[int]] = []
         self.ctp_errors: list[str] = []
+        self.randomizer = randomizer if randomizer is not None else random.Random()
 
     @property
     @abstractmethod
@@ -443,11 +474,11 @@ class Counterpoint(ABC):
             note_duration: int = 0
             while note_duration < len(self.melody.rhythm[measure]):
                 if i == 0:
-                    ctp_melody.append(rm.choice(self.search_domain[i]))
+                    ctp_melody.append(self.randomizer.choice(self.search_domain[i]))
                 elif i > 0 and self.melody.ties[i - 1]:
                     ctp_melody.append(ctp_melody[i - 1])
                 else:
-                    ctp_melody.append(rm.choice(self.search_domain[i]))
+                    ctp_melody.append(self.randomizer.choice(self.search_domain[i]))
                 i += 1
                 note_duration += 1
             measure += 1
@@ -730,7 +761,7 @@ class FifthSpecies(Counterpoint):
             if measures == 0:
                 rhythm.append([4, 4])
             else:
-                rhythm.append(rm.choices(measure_rhythms, rhythmic_weights)[0])
+                rhythm.append(self.randomizer.choices(measure_rhythms, rhythmic_weights)[0])
         rhythm.append([8,])
         return rhythm
 
@@ -808,26 +839,26 @@ def brute_force(ctp: Counterpoint) -> tuple[float, list[int], list[str]]:
     raise NotImplementedError
 
 
-def best_first_search(ctp: Counterpoint, weighted_idx: list[int] | dict[int, float]):
-    search_domain: list[list[int]] = ctp.search_domain
-    search_ctp: list[int] = ctp.melody.pitches
-    best_global_ctp: list[int] = search_ctp.copy()
-    best_global_error: float = math.inf
-    best_global_weighted_indices: list[int] = []
+def best_first_search(ctp: Counterpoint, weighted_idx: list[int]):
+    search_domain = ctp.search_domain
+    search_ctp = ctp.melody.pitches
+    best_global_ctp = search_ctp.copy()
+    best_global_error = INFINITY
+    best_global_weighted_indices: dict[int, int] = {}
     if isinstance(weighted_idx, list):
-        idx: list[int] = weighted_idx
+        idx = weighted_idx
     else:
         idx = list(weighted_idx.keys())
     for i in idx:
-        best_note: int = search_domain[i][0]
-        local_error: float = math.inf
-        local_weighted_indices: list[int] = []
+        best_note = search_domain[i][0]
+        local_error = INFINITY
+        local_weighted_indices = {}
         for j in range(len(search_domain[i])):
             search_ctp[i] = search_domain[i][j]
             ctp.melody.set_melody(search_ctp.copy())
             constrained = Constraints(ctp)
-            error: float = constrained.cost_function()
-            weighted_indices: list[int] = constrained.get_weighted_indices()
+            error = constrained.cost_function()
+            weighted_indices = constrained.get_weighted_indices()
             if error <= local_error:
                 best_note = search_domain[i][j]
                 local_error = error
@@ -840,24 +871,28 @@ def best_first_search(ctp: Counterpoint, weighted_idx: list[int] | dict[int, flo
     return best_global_error, best_global_ctp, best_global_weighted_indices
 
 
-def improved_search(ctp: Counterpoint) -> tuple[float, list[int], list[str]]:
-    start_time: float = time.time()
-    penalty: float = math.inf
-    elapsed_time: float = time.time() - start_time
-    best_ctp: list[int] = ctp.melody.pitches
-    lowest_penalty: float = math.inf
-    weighted_idx: list[int] = [i for i in range(len(best_ctp))]
-    prev_penalty: float = penalty
-    randomize_idx: int = 1
+def improved_search(ctp: Counterpoint):
+    """The main search function for the counterpoint generation - returns
+    - the lowest penalty
+    - the best counterpoint
+    - the list of errors"""
+    start_time = time.time()
+    penalty = INFINITY
+    elapsed_time = 0.
+    best_ctp = ctp.melody.pitches
+    lowest_penalty = INFINITY
+    weighted_idx = [i for i in range(len(best_ctp))]
+    prev_penalty = penalty
+    randomize_idx = 1
     while penalty >= ctp.ERROR_THRESHOLD and elapsed_time < ctp.MAX_SEARCH_TIME:
         penalty, ctp_notes, weighted_idx = best_first_search(ctp, weighted_idx)
         if penalty == prev_penalty:  # no improvement
             weighted_idx = list(weighted_idx.keys())
             for i in range(randomize_idx):
-                ctp_notes[weighted_idx[i]] = rm.choice(ctp.search_domain[weighted_idx[i]])
-            rm.shuffle(weighted_idx)
+                ctp_notes[weighted_idx[i]] = ctp.randomizer.choice(ctp.search_domain[weighted_idx[i]])
+            ctp.randomizer.shuffle(weighted_idx)
             ctp.melody.set_melody(ctp_notes)
-            if randomize_idx != len(best_ctp) - 1:
+            if randomize_idx != len(best_ctp)-1:
                 randomize_idx += 1
         if penalty < lowest_penalty:
             randomize_idx = 1
@@ -869,163 +904,50 @@ def improved_search(ctp: Counterpoint) -> tuple[float, list[int], list[str]]:
         prev_penalty = penalty
     constraint = Constraints(ctp)
     lowest_penalty = constraint.cost_function()
-    lowest_error_list: list[str] = constraint.get_errors()
+    lowest_error_list = constraint.get_errors()
     return lowest_penalty, best_ctp, lowest_error_list
 
 
-def main():
-    cont = True
-    i = 0
-    print("Automatic Species Generation")
-    while cont:
-        print(" ")
-        key = input("key? :")
-        scale_name = input("scale type? [major or minor]: ")
-        species = input("Species? [first to fifth]: ")
-        range_str = input("Voice range of cantus firmus? [bass, tenor, alto, soprano]: ")
-        cf_range = RANGES[RANGES_NAMES[range_str]]
-        if cf_range == BASS_RANGE:
-            ctp_position = "y"
-        elif cf_range == SOPRANO_RANGE:
-            ctp_position = "n"
+class CounterpointGenerator(SongGenerator):
+    def __init__(
+        self,
+        key: KeyName,
+        scale_name: ScaleName,
+        species: SpeciesName,
+        cf_part: PartName,
+        ctp_position: CtpPositionName | None = None,
+        bar_length: int = 2,
+        seed: int | None = None
+    ):
+        super(CounterpointGenerator, self).__init__(seed)
+        self.key: KeyName = key
+        self.scale_name: ScaleName = scale_name
+        self.species: SpeciesName = species
+        self.cf_part: PartName = cf_part
+        if cf_part == "bass":
+            self.ctp_position: CtpPositionName = "above"
+        elif cf_part == "soprano":
+            self.ctp_position: CtpPositionName = "below"
         else:
-            ctp_position = input("above cantus firmus? [y/n]: ")
-        if ctp_position[0].upper() == "Y":
-            ctp_position = "above"
-        else:
-            ctp_position = "below"
-        instrument = input("instrument? [Acoustic Grand Piano, Church Organ etc.]: ")
-        name = "ctp"+str(i)
-        mid_gen = MidiGenerator(key, scale_name, species, ctp_position=ctp_position, cf_range=cf_range)
-        mid_gen.set_instrument(instrument)
-        mid_gen.to_instrument()
-        mid_gen.export_to_midi(name="generated_midi/user_defined/"+species+"_species_"+name+".mid")
-        print("midi successfully exported to "+"generated_midi/user_defined/"+species+"_species_"+name+".mid")
-        cont_str = input("try again? [y/n]: ")
-        if cont_str[0].upper() == "Y":
-            cont = True
-        else:
-            cont = False
-        i += 1
+            self.ctp_position = "above" if ctp_position is None else ctp_position
+        self.bar_length: int = bar_length
 
-
-class MidiGenerator:
-    instruments = ["Church Organ", "Church Organ"]
-
-    def __init__(self, key, scale_name, species, bar_length=2, ctp_position="above", cf_range=RANGES[TENOR], cf_notes=None, cf_rhythm=None):
-        self.cf_range_name = RANGES.index(cf_range)
-        self.species = species
-        self.cf = CantusFirmus(key, scale_name, bar_length, cf_notes, cf_rhythm, start=0, voice_range=cf_range)
-        self.loaded_instruments = []
-        if species == "first":
-            self.ctp = FirstSpecies(self.cf, ctp_position=ctp_position)
-        elif species == "second":
-            self.ctp = SecondSpecies(self.cf, ctp_position=ctp_position)
-        elif species == "third":
-            self.ctp = ThirdSpecies(self.cf, ctp_position=ctp_position)
-        elif species == "fourth":
-            self.ctp = FourthSpecies(self.cf, ctp_position=ctp_position)
-        elif species == "fifth":
-            self.ctp = FifthSpecies(self.cf, ctp_position=ctp_position)
-        self.ctp.generate_ctp()
-        print(self.ctp.search_domain)
-
-    def set_instrument(self, name):
-        if isinstance(name, list):
-            self.instruments = name
-        else:
-            self.instruments = [name]*2
-
-    def to_instrument(self):
-        cf_inst = pretty_midi.Instrument(program=pretty_midi.instrument_name_to_program(self.instruments[0]), name="cf")
-        ctp_inst = pretty_midi.Instrument(program=pretty_midi.instrument_name_to_program(self.instruments[1]), name="ctp")
-        self.ctp.melody.to_instrument(ctp_inst)
-        self.loaded_instruments.append(ctp_inst)
-        self.cf.to_instrument(cf_inst)
-        self.loaded_instruments.append(cf_inst)
-
-    def export_to_midi(self, tempo=120, name="generated_midi/user_defined/ctp.mid"):
-        pm = pretty_midi.PrettyMIDI(initial_tempo=tempo)
-        for inst in self.loaded_instruments:
-            if inst != None:
-                pm.instruments.append(inst)
-        pm.write(name)
-
-
-def result_generation():
-    inst = ["Acoustic Grand Piano"] * 4
-    data = []
-    for i in range(100):
-        iteration_data = {}
-        key = rm.choice(KEY_NAMES)
-        scale = rm.choice(["major", "minor"])
-        cf_range = rm.choice([BASS, TENOR, ALTO, SOPRANO])
-        if cf_range == SOPRANO:
-            ctp_position = "below"
-        elif cf_range == BASS:
-            ctp_position = "above"
-        else:
-            ctp_position = rm.choice(["above", "below"])
-        start = time()
-        ctp = MidiGenerator(key, scale, ctp_position=ctp_position, cf_range=RANGES[cf_range], bar_length=2)
-        end = time()-start
-        iteration_data["index"] = i
-        iteration_data["error"] = ctp.ctp.error
-        iteration_data["time"] = end
-        iteration_data["penalties"] = ctp.penalty_list
-        iteration_data["error_list"] = ctp.ctp.ctp_errors
-        ctp.set_instrument(inst)
-        ctp.to_instrument()
-        ctp.export_to_midi(tempo=120, name="generated_midi/fifth_species/data2" + str(i) + ".mid")
-        data.append(iteration_data)
-    with open('data/fifth_species/data2.txt', 'w') as filehandle:
-        json.dump(data, filehandle)
-# result_generation()
-
-
-def result_analysis():
-    with open('data/fifth_species/data.txt', 'r') as filehandle:
-        data = json.load(filehandle)
-    THRESHOLD = 100
-    errors = []
-    penalties = []
-    errors_list = []
-    time_list = []
-    zero_errors = []
-    for i in range(len(data)):
-        errors.append(data[i]["error"])
-        penalties.append(data[i]["penalties"])
-        errors_list.append(data[i]["error_list"])
-        if errors[i] == 0:
-            zero_errors.append(i)
-        time_list.append(data[i]["time"])
-    print("average time: ", sum(time_list)/len(data))
-    print("average error: ", sum(errors)/len(data))
-    print("worst case :", max(errors), "at index ", errors.index(max(errors)), "with errors ", errors_list[errors.index(max(errors))], "and comp time ", time_list[errors.index(max(errors))])
-    print("zero errors: ", zero_errors)
-    most_common_error = {}
-    for i in errors_list:
-        for e in i:
-            if e not in most_common_error.keys():
-                most_common_error[e] = 1
-            else:
-                most_common_error[e] += 1
-    most_common_error = dict(sorted(most_common_error.items(), reverse=True, key=lambda item: item[1]))
-    most_common_error_list = list(most_common_error.keys())
-    num_errors = 0
-    for key in most_common_error:
-        num_errors += most_common_error[key]
-    print("most common error: ", most_common_error_list[0])
-    print("second most common error: ", most_common_error_list[1])
-    print(f"precentage: ", (most_common_error[most_common_error_list[0]]/num_errors)*100)
-    num_below_threshold = 0
-    for e in errors:
-        if e < THRESHOLD:
-            num_below_threshold += 1
-    print("precentage below threshold: ", num_below_threshold, "%")
-    print("penalties: ", penalties[8])
-    plt.plot(penalties[8])
-    plt.ylabel('penalty')
-    plt.xlabel("iteration nr")
-    plt.show()
-# result_analysis()
+    def generate(self) -> list[Note]:
+        cf = CantusFirmus(
+            self.key,
+            self.scale_name,
+            self.bar_length,
+            voice_range=RANGES[RANGES.index(self.cf_part)],
+            randomizer=self.randomizer
+        )
+        ctp: Counterpoint
+        ctp: Counterpoint = {
+            "first": FirstSpecies,
+            "second": SecondSpecies,
+            "third": ThirdSpecies,
+            "fourth": FourthSpecies,
+            "fifth": FifthSpecies
+        }[self.species](cf, ctp_position=self.ctp_position, randomizer=self.randomizer)
+        ctp.generate_ctp()
+        notes = cf.to_list_notes() + ctp.melody.to_list_notes()
+        return notes
