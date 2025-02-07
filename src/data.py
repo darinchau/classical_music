@@ -248,6 +248,34 @@ class Audio:
         """
         return f"(Audio)\nDuration:\t{self.duration:5f}\nSample Rate:\t{self.sample_rate}\nChannels:\t{self.nchannels}\nNum frames:\t{self.nframes}"
 
+    def slice_frames(self, start_frame: int = 0, end_frame: int = -1) -> Audio:
+        """Takes the current audio and splice the audio between start (frames) and end (frames). Returns a new copy.
+
+        Specify end = -1 to take everything alll the way until the end"""
+        assert start_frame >= 0
+        assert end_frame == -1 or (end_frame > start_frame and end_frame <= self.nframes)
+        data = None
+
+        if end_frame == -1:
+            data = self._data[:, start_frame:]
+        if end_frame > 0:
+            data = self._data[:, start_frame:end_frame]
+
+        assert data is not None
+        return Audio(data.copy(), self.sample_rate)
+
+    def slice_seconds(self, start: float = 0, end: float = -1) -> Audio:
+        """Takes the current audio and splice the audio between start (seconds) and end (seconds). Returns a new copy.
+
+        Specify end = -1 to take everything alll the way until the end"""
+        assert start >= 0
+        start_frame = int(start * self._sample_rate)
+        end_frame = self.nframes if end == -1 else int(end * self._sample_rate)
+        assert start_frame < end_frame <= self.nframes
+        if end_frame == self.nframes:
+            end_frame = -1
+        return self.slice_frames(start_frame, end_frame)
+
 
 @dataclass(frozen=True)
 class Note:
@@ -480,6 +508,30 @@ class PianoRoll:
             )
 
 
+class NotesPlayer(ABC):
+    """This will be used to play notes into audio. We have no way of checking this
+    but ideally the notes being played has timing aligned exactly with the audio
+    This should only accept notes that are real-timed
+
+    A simple example of this is the default fluid synth player implemented below"""
+    @abstractmethod
+    def play(self, notes: list[Note]) -> Audio:
+        raise NotImplementedError
+
+
+class FluidSynthNotesPlayer(NotesPlayer):
+    """Uses the fluidsynth library to play notes into audio"""
+
+    def __init__(self, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2"):
+        self._soundfont_path = soundfont_path
+
+    def play(self, notes: list[Note]) -> Audio:
+        """Plays the notes into audio"""
+        with tempfile.NamedTemporaryFile(suffix=".mid") as f:
+            notes_to_midi(notes, f.name)
+            return midi_to_audio(f.name, soundfont_path=self._soundfont_path)
+
+
 def _step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], alter: int) -> int:
     return {"C": 0, "D": 2, "E": 4, "F": -1, "G": 1, "A": 3, "B": 5}[step] + 7 * alter
 
@@ -623,6 +675,19 @@ def _check_pianoroll_fail_reason(array: NDArray, raise_error: bool = False) -> t
             elif array[i, note] > 0 and note not in note_on_dict:
                 note_on_dict[note] = array[i, note]
     return None
+
+
+def notes_to_real_time(notes: list[Note], tempo: float = 120.) -> list[Note]:
+    """Converts notes to real time"""
+    assert all(not note.real_time for note in notes), "All notes must be timed against quarter length"
+    return [Note(
+        index=n.index,
+        octave=n.octave,
+        duration=n.duration * 60 / tempo,
+        offset=n.offset * 60 / tempo,
+        real_time=True,
+        velocity=n.velocity
+    ) for n in notes]
 
 
 def display_score(obj: m21.base.Music21Object, invert_color: bool = True, skip_display: bool = False):
@@ -858,3 +923,16 @@ def pianoroll_to_notes(pianoroll: PianoRoll) -> list[Note]:
             elif array[i, note] > 0 and note not in note_on_dict:
                 note_on_dict[note] = (i, array[i, note])
     return notes
+
+
+def notes_to_audio(notes: list[Note], player: NotesPlayer | None = None, tempo: float = 120.):
+    """Turns the Notes into Audio. If the notes are timed in real time then the tempo will be ignored.
+    Otherwise the notes will be converted to real time using the tempo provided.
+
+    By default, this function uses the fluid synth player. If you want to use a different player, then provide the player object."""
+    assert notes and all(note.real_time == notes[0].real_time for note in notes), "All notes must have the same timing property"
+    if not notes[0].real_time:
+        notes = notes_to_real_time(notes, tempo)
+    if player is None:
+        player = FluidSynthNotesPlayer()
+    return player.play(notes)
