@@ -564,8 +564,6 @@ class Constraints:
                         penalty += 100
         return penalty
 
-    " Fifth species"
-
     def _is_eight_note_handled(self, idx, ctp_draft):
         if idx in self.start_idx or idx in self.end_idx:
             return True
@@ -1412,7 +1410,6 @@ class FourthSpecies(Counterpoint):
 class FifthSpecies(Counterpoint):
     def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
         super(FifthSpecies, self).__init__(cf, ctp_position, randomizer=randomizer)
-        self.species: str = "fifth"
         self.melody.set_rhythm(self.get_rhythm())
         self.rhythm: list[list[int]] = self.melody.rhythm
         self.num_notes: int = sum(len(row) for row in self.rhythm)
@@ -1424,7 +1421,9 @@ class FifthSpecies(Counterpoint):
     def ERROR_THRESHOLD(self) -> int:
         return 100
 
-    """ RHYTHMIC RULES """
+    @property
+    def species(self) -> int:
+        return 5
 
     def get_rhythm(self) -> list[list[int]]:
         rhythm: list[list[int]] = []
@@ -1614,22 +1613,37 @@ class CounterpointGenerator(SongGenerator):
         else:
             self.ctp_position = "above" if ctp_position is None else ctp_position
         self.bar_length: int = bar_length
+        self._cf: CantusFirmus | None = None
+        self._ctp: Counterpoint | None = None
 
     def generate(self) -> list[Note]:
-        cf = CantusFirmus(
+        self._cf = CantusFirmus(
             self.key,
             self.scale_name,
             self.bar_length,
             part=self.cf_part,
             randomizer=self.randomizer
         )
-        ctp: Counterpoint = {
+        self._ctp = {
             "first": FirstSpecies,
             "second": SecondSpecies,
             "third": ThirdSpecies,
             "fourth": FourthSpecies,
             "fifth": FifthSpecies
-        }[self.species](cf, ctp_position=self.ctp_position, randomizer=self.randomizer)
-        ctp.generate_ctp()
-        notes = cf.to_list_notes() + ctp.melody.to_list_notes()
+        }[self.species](self._cf, ctp_position=self.ctp_position, randomizer=self.randomizer)
+        assert self._ctp is not None  # to pass typechecker
+        self._ctp.generate_ctp()
+        notes = self._cf.to_list_notes() + self._ctp.melody.to_list_notes()
         return notes
+
+    @property
+    def cf(self) -> CantusFirmus:
+        if self._cf is None:
+            raise ValueError("Cantus Firmus has not been generated yet")
+        return self._cf
+
+    @property
+    def ctp(self) -> Counterpoint:
+        if self._ctp is None:
+            raise ValueError("Counterpoint has not been generated yet")
+        return self._ctp
