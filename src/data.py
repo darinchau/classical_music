@@ -276,6 +276,62 @@ class Audio:
             end_frame = -1
         return self.slice_frames(start_frame, end_frame)
 
+    def resample(self, sample_rate: int) -> Audio:
+        """Resamples the audio to a new sample rate"""
+        assert sample_rate > 0
+        data = librosa.resample(self._data, orig_sr=self.sample_rate, target_sr=sample_rate)
+        return Audio(data, sample_rate)
+
+    def pad(self, target: int, front: bool = False) -> Audio:
+        """Returns a new audio with the given number of frames and the same sample rate as self.
+        If n < self.nframes, we will trim the audio; if n > self.nframes, we will perform zero padding
+        If front is set to true, then operate on the front instead of on the back"""
+        length = self.nframes
+        if not front:
+            if length > target:
+                new_data = self._data[:, :target].copy()
+            else:
+                new_data = np.pad(self._data, ((0, 0), (0, target - length)), mode='constant')
+        else:
+            if length > target:
+                new_data = self._data[:, -target:].copy()
+            else:
+                new_data = np.pad(self._data, ((0, 0), (target - length, 0)), mode='constant')
+
+        assert new_data.shape[1] == target
+
+        return Audio(new_data, self._sample_rate)
+
+    def to_nchannels(self, target: typing.Literal[1, 2]) -> Audio:
+        """Return self with the correct target. If you use int, you must guarantee the value is 1 or 2, otherwise you get an error"""
+        self.sanity_check()
+        if self.nchannels == target:
+            return Audio(self.data.copy(), self.sample_rate)
+
+        if self.nchannels == 1 and target == 2:
+            return Audio(np.stack([self.data[0], self.data[0]], axis=0), self.sample_rate)
+
+        if self.nchannels == 2 and target == 1:
+            return Audio(self.data.mean(axis=0, keepdims=True), self.sample_rate)
+
+        assert False, "Unreachable"
+
+    def plot(self):
+        waveform = self.data
+        num_channels = self.nchannels
+        num_frames = self.nframes
+
+        time_axis = np.arange(0, num_frames) / self.sample_rate
+
+        figure, axes = plt.subplots()
+        if num_channels == 1:
+            axes.plot(time_axis, waveform[0], linewidth=1)
+        else:
+            axes.plot(time_axis, np.abs(waveform[0]), linewidth=1)
+            axes.plot(time_axis, -np.abs(waveform[1]), linewidth=1)
+        axes.grid(True)
+        plt.show(block=False)
+
 
 @dataclass(frozen=True)
 class Note:
@@ -476,7 +532,7 @@ class PianoRoll:
         return self._resolution
 
     @property
-    def piano_roll(self) -> NDArray:
+    def pianoroll(self) -> NDArray:
         return self._pianoroll
 
     @property
@@ -487,6 +543,10 @@ class PianoRoll:
     @property
     def real_time(self) -> bool:
         return self._real_time
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return tuple(self._pianoroll.shape)  # type: ignore
 
     @staticmethod
     def new_zero_array(nframes: int) -> NDArray:
@@ -512,10 +572,11 @@ class NotesPlayer(ABC):
     """This will be used to play notes into audio. We have no way of checking this
     but ideally the notes being played has timing aligned exactly with the audio
     This should only accept notes that are real-timed
+    In the future we could hook this to a VST
 
     A simple example of this is the default fluid synth player implemented below"""
     @abstractmethod
-    def play(self, notes: list[Note]) -> Audio:
+    def play(self, notes: list[Note], sample_rate: int = 48000) -> Audio:
         raise NotImplementedError
 
 
@@ -525,11 +586,11 @@ class FluidSynthNotesPlayer(NotesPlayer):
     def __init__(self, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2"):
         self._soundfont_path = soundfont_path
 
-    def play(self, notes: list[Note]) -> Audio:
+    def play(self, notes: list[Note], sample_rate: int = 48000) -> Audio:
         """Plays the notes into audio"""
         with tempfile.NamedTemporaryFile(suffix=".mid") as f:
             notes_to_midi(notes, f.name)
-            return midi_to_audio(f.name, soundfont_path=self._soundfont_path)
+            return midi_to_audio(f.name, sample_rate=sample_rate, soundfont_path=self._soundfont_path)
 
 
 def _step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], alter: int) -> int:
@@ -901,8 +962,8 @@ def notes_to_midi(notes: list[Note], fpath: str):
 
 def pianoroll_to_notes(pianoroll: PianoRoll) -> list[Note]:
     """Converts a pianoroll to a list of notes. A list of notes with the same timing property will be returned."""
-    _check_pianoroll_fail_reason(pianoroll.piano_roll, raise_error=True)
-    array = pianoroll.piano_roll
+    _check_pianoroll_fail_reason(pianoroll.pianoroll, raise_error=True)
+    array = pianoroll.pianoroll
     note_on_dict = {}
     total_time = array.shape[0]
     notes: list[Note] = []
@@ -925,7 +986,7 @@ def pianoroll_to_notes(pianoroll: PianoRoll) -> list[Note]:
     return notes
 
 
-def notes_to_audio(notes: list[Note], player: NotesPlayer | None = None, tempo: float = 120.):
+def notes_to_audio(notes: list[Note], player: NotesPlayer | None = None, tempo: float = 120., sample_rate: int = 48000) -> Audio:
     """Turns the Notes into Audio. If the notes are timed in real time then the tempo will be ignored.
     Otherwise the notes will be converted to real time using the tempo provided.
 
@@ -935,4 +996,7 @@ def notes_to_audio(notes: list[Note], player: NotesPlayer | None = None, tempo: 
         notes = notes_to_real_time(notes, tempo)
     if player is None:
         player = FluidSynthNotesPlayer()
-    return player.play(notes)
+    audio = player.play(notes, sample_rate=sample_rate)
+    if audio.sample_rate != sample_rate:
+        audio = audio.resample(sample_rate)
+    return audio
