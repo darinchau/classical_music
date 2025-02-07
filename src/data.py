@@ -3,6 +3,7 @@ import os
 import heapq
 import librosa
 import logging
+import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import mido
 import music21 as m21
@@ -622,6 +623,60 @@ def _check_pianoroll_fail_reason(array: NDArray, raise_error: bool = False) -> t
             elif array[i, note] > 0 and note not in note_on_dict:
                 note_on_dict[note] = array[i, note]
     return None
+
+
+def display_score(obj: m21.base.Music21Object, invert_color: bool = True, skip_display: bool = False):
+    """Displays the score. Returns a dictionary where keys are the page numbers and values are the images of the page in np arrays"""
+    if not _MUSIC21_SETUP:
+        _setup()
+
+    from music21.stream.base import Opus
+    from music21.converter.subConverters import ConverterMusicXML
+    from music21 import defaults
+    from music21.converter import museScore
+
+    savedDefaultTitle = defaults.title
+    savedDefaultAuthor = defaults.author
+    defaults.title = ''
+    defaults.author = ''
+
+    if isinstance(obj, Opus):
+        raise NotImplementedError("Perform a recursive call to show here when we support Opuses. Ref: music21.ipython21.converters.showImageThroughMuseScore")
+
+    fp = ConverterMusicXML().write(
+        obj,
+        fmt="musicxml",
+        subformats=["png"],
+        trimEdges=True,
+    )
+
+    last_png = museScore.findLastPNGPath(fp)
+    last_number, num_digits = museScore.findPNGRange(fp, last_png)
+
+    pages: dict[int, np.ndarray] = {}
+    stem = str(fp)[:str(fp).rfind('-')]
+    for pg in range(1, last_number + 1):
+        page_str = stem + '-' + str(pg).zfill(num_digits) + '.png'
+        page = np.array(mpimg.imread(page_str) * 255, dtype=np.uint8)
+
+        # Invert the color because dark mode
+        if invert_color:
+            page[:, :, :3] = 255 - page[:, :, :3]
+        pages[pg] = page
+
+    if is_ipython() and not skip_display:
+        from IPython.display import Image, display, HTML  # type: ignore
+
+        for pg in range(1, last_number + 1):
+            with tempfile.NamedTemporaryFile(suffix=".png") as f:
+                mpimg.imsave(f.name, pages[pg])
+                display(Image(data=f.read(), retina=True))
+            if pg < last_number:
+                display(HTML('<p style="padding-top: 20px">&nbsp;</p>'))
+
+    defaults.title = savedDefaultTitle
+    defaults.author = savedDefaultAuthor
+    return pages
 
 
 def midi_to_notes(midi_path: str, real_time: bool = True, normalize: bool = False) -> list[Note]:
