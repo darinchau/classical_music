@@ -36,7 +36,7 @@ def notes_to_representations(notes: list[Note], n_fft: int = 512):
     cos_phase = np.cos(phase)
     x = np.stack([magnitude, sin_phase, cos_phase], axis=-1)
     return (
-        # Shape: T, 257, 3
+        # Shape: T, int(n_fft/2) + 1, 3
         x,
         # Shape: T, 90,
         roll,
