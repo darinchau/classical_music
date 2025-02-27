@@ -19,7 +19,7 @@ from .base import SongGenerator
 INFINITY = 1 << 64 - 1  # A big number for the search algorithm
 
 ScaleName = typing.Literal["major", "minor"]
-SpeciesName = typing.Literal["first", "second", "third", "fourth", "fifth"]
+SpeciesName = typing.Literal["cf", "first", "second", "third", "fourth", "fifth"]
 KeyName = typing.Literal[
     'C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B',
     'C#', 'D#', 'F#', 'G#', 'A#',
@@ -31,7 +31,7 @@ PartName = typing.Literal["soprano", "alto", "tenor", "bass"]
 KEY_NAMES: list[KeyName] = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
 KEY_NAMES_SHARP: list[KeyName] = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-RANGES = {
+RANGES: dict[PartName, range] = {
     "bass": range(40, 65),
     "tenor": range(48, 73),
     "alto": range(53, 78),
@@ -70,22 +70,23 @@ def _get_midi_number(pitch: int | str) -> int:
     return Note.from_str(pitch).midi_number
 
 
-def _shift_part(part: PartName, shift: CtpPositionName) -> PartName:
-    match (part, shift):
-        case ("soprano", "below"):
-            return "alto"
-        case ("alto", "below"):
-            return "tenor"
-        case ("tenor", "below"):
-            return "bass"
-        case ("bass", "above"):
-            return "tenor"
-        case ("tenor", "above"):
-            return "alto"
-        case ("alto", "above"):
-            return "soprano"
-        case (_, _):
-            raise ValueError(f"Invalid shift: {part} {shift}")
+def _determine_ctp_position(ctp_position, cf_part) -> CtpPositionName:
+    pos = {
+        ("soprano", "alto"): "above",
+        ("soprano", "tenor"): "above",
+        ("soprano", "bass"): "above",
+        ("alto", "soprano"): "below",
+        ("alto", "tenor"): "above",
+        ("alto", "bass"): "above",
+        ("tenor", "soprano"): "below",
+        ("tenor", "alto"): "below",
+        ("tenor", "bass"): "above",
+        ("bass", "soprano"): "below",
+        ("bass", "alto"): "below",
+        ("bass", "tenor"): "below",
+    }[(ctp_position, cf_part)]
+    assert pos in ("above", "below"), "Invalid position"
+    return pos
 
 
 class Constraints:
@@ -1070,10 +1071,12 @@ class CantusFirmus(Melody):
 
 
 class Counterpoint(ABC):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
-        self.voice_range = RANGES[_shift_part(cf.part, ctp_position)]
+    def __init__(self, cf: CantusFirmus, part: PartName, randomizer: random.Random | None = None):
+        if cf.part == part:
+            raise ValueError("The counterpoint and cantus firmus cannot be the same part")
+        self.voice_range = RANGES[part]
         self.melody = Melody(cf.key, cf.scale.scale_type, cf.bar_length, voice_range=self.voice_range)
-        self.ctp_position: CtpPositionName = ctp_position
+        self.part = part
         self.scale_pitches: list[int] = self.melody.scale_pitches
         self.cf: CantusFirmus = cf
         self.search_domain: list[list[int]] = []
@@ -1101,6 +1104,10 @@ class Counterpoint(ABC):
     @abstractmethod
     def _possible_notes(self) -> list[list[int]]:
         raise NotImplementedError
+
+    @property
+    def ctp_position(self):
+        return _determine_ctp_position(self.part, self.cf.part)
 
     @property
     def MAX_SEARCH_TIME(self) -> int:
@@ -1172,9 +1179,37 @@ class Counterpoint(ABC):
         self.melody.set_melody(best_ctp)
 
 
+class ZeroSpecies(Counterpoint):
+    """Returns the cantus firmus only"""
+    def __init__(self, cf: CantusFirmus, part: PartName, randomizer: random.Random | None = None):
+        super(ZeroSpecies, self).__init__(cf, part, randomizer=randomizer)
+        self.melody.set_rhythm(cf.rhythm)
+        self.melody.set_ties(cf.ties)
+        self.search_domain: list[list[int]] = self._possible_notes()
+        self.melody.set_melody(cf.pitches)
+
+    @property
+    def ERROR_THRESHOLD(self) -> int:
+        return 0
+
+    @property
+    def species(self) -> int:
+        return 0
+
+    def get_rhythm(self) -> list[list[int]]:
+        "Voices all move together in the same rhythm as the cantus firmus."
+        return [[8]] * self.cf.length
+
+    def get_ties(self) -> list[bool]:
+        return [False] * self.cf.length
+
+    def _possible_notes(self) -> list[list[int]]:
+        poss: list[list[int]] = [[-1] for _ in self.melody.rhythm]
+        return poss
+
 class FirstSpecies(Counterpoint):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
-        super(FirstSpecies, self).__init__(cf, ctp_position, randomizer=randomizer)
+    def __init__(self, cf: CantusFirmus, part: PartName, randomizer: random.Random | None = None):
+        super(FirstSpecies, self).__init__(cf, part, randomizer=randomizer)
         self.melody.set_rhythm(self.get_rhythm())
         self.melody.set_ties(self.get_ties())
         self.search_domain: list[list[int]] = self._possible_notes()
@@ -1210,8 +1245,8 @@ class FirstSpecies(Counterpoint):
 
 
 class SecondSpecies(Counterpoint):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
-        super(SecondSpecies, self).__init__(cf, ctp_position, randomizer=randomizer)
+    def __init__(self, cf: CantusFirmus, part: PartName, randomizer: random.Random | None = None):
+        super(SecondSpecies, self).__init__(cf, part, randomizer=randomizer)
         self.melody.set_rhythm(self.get_rhythm())
         self.num_notes: int = sum(len(row) for row in self.get_rhythm())
         self.melody.set_ties(self.get_ties())
@@ -1281,8 +1316,8 @@ class SecondSpecies(Counterpoint):
 
 
 class ThirdSpecies(Counterpoint):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
-        super(ThirdSpecies, self).__init__(cf, ctp_position, randomizer=randomizer)
+    def __init__(self, cf: CantusFirmus, part: PartName, randomizer: random.Random | None = None):
+        super(ThirdSpecies, self).__init__(cf, part, randomizer=randomizer)
         self.melody.set_rhythm(self.get_rhythm())
         self.num_notes: int = sum(len(row) for row in self.get_rhythm())
         self.melody.set_ties(self.get_ties())
@@ -1351,8 +1386,8 @@ class ThirdSpecies(Counterpoint):
 
 
 class FourthSpecies(Counterpoint):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
-        super(FourthSpecies, self).__init__(cf, ctp_position, randomizer=randomizer)
+    def __init__(self, cf: CantusFirmus, part: PartName, randomizer: random.Random | None = None):
+        super(FourthSpecies, self).__init__(cf, part, randomizer=randomizer)
         self.melody.set_rhythm(self.get_rhythm())
         self.num_notes: int = sum(len(row) for row in self.get_rhythm())
         self.melody.set_ties(self.get_ties())
@@ -1408,8 +1443,8 @@ class FourthSpecies(Counterpoint):
 
 
 class FifthSpecies(Counterpoint):
-    def __init__(self, cf: CantusFirmus, ctp_position: CtpPositionName = "above", randomizer: random.Random | None = None):
-        super(FifthSpecies, self).__init__(cf, ctp_position, randomizer=randomizer)
+    def __init__(self, cf: CantusFirmus, part: PartName, randomizer: random.Random | None = None):
+        super(FifthSpecies, self).__init__(cf, part, randomizer=randomizer)
         self.melody.set_rhythm(self.get_rhythm())
         self.rhythm: list[list[int]] = self.melody.rhythm
         self.num_notes: int = sum(len(row) for row in self.rhythm)
@@ -1498,29 +1533,6 @@ class FifthSpecies(Counterpoint):
         return poss
 
 
-def _get_indices(ctp_len: int, idx: int, n_window: int) -> list[int]:
-    s_w: list[int] = []
-    for i in range(n_window):
-        if idx + i < ctp_len:
-            s_w.append(idx + i)
-        else:
-            s_w.append(ctp_len - 1 - i)
-    s_w.sort()
-    return [s_w[0], s_w[-1]]
-
-
-def _path_search(ctp: Counterpoint, search_window: list[int]) -> tuple[list[int], float, list[str]]:
-    raise NotImplementedError
-
-
-def search(ctp: Counterpoint) -> tuple[float, list[int], list[str]]:
-    raise NotImplementedError
-
-
-def brute_force(ctp: Counterpoint) -> tuple[float, list[int], list[str]]:
-    raise NotImplementedError
-
-
 def best_first_search(ctp: Counterpoint, weighted_idx: list[int]):
     search_domain = ctp.search_domain
     search_ctp = ctp.melody.pitches
@@ -1597,7 +1609,7 @@ class CounterpointGenerator(SongGenerator):
         scale_name: ScaleName,
         species: SpeciesName,
         cf_part: PartName,
-        ctp_position: CtpPositionName | None = None,
+        ctp_part: PartName | None = None,
         bar_length: int = 2,
         seed: int | None = None
     ):
@@ -1606,23 +1618,21 @@ class CounterpointGenerator(SongGenerator):
         self.scale_name: ScaleName = scale_name
         self.species: SpeciesName = species
         self.cf_part: PartName = cf_part
-        if cf_part == "bass":
-            self.ctp_position: CtpPositionName = "above"
-        elif cf_part == "soprano":
-            self.ctp_position: CtpPositionName = "below"
-        else:
-            self.ctp_position = "above" if ctp_position is None else ctp_position
+        default_part = {"alto": "soprano", "soprano": "alto", "tenor": "alto", "bass": "tenor"}[cf_part]
+        assert default_part in RANGES, f"Invalid part name: {default_part}"
+        self.ctp_position: PartName = ctp_part if ctp_part is not None else default_part
         self.bar_length: int = bar_length
         self._cf: CantusFirmus | None = None
         self._ctp: Counterpoint | None = None
 
     def generate(self) -> list[Note]:
+        r = self.get_randomizer()
         self._cf = CantusFirmus(
             self.key,
             self.scale_name,
             self.bar_length,
             part=self.cf_part,
-            randomizer=self.randomizer
+            randomizer=r
         )
         self._ctp = {
             "first": FirstSpecies,
@@ -1630,7 +1640,7 @@ class CounterpointGenerator(SongGenerator):
             "third": ThirdSpecies,
             "fourth": FourthSpecies,
             "fifth": FifthSpecies
-        }[self.species](self._cf, ctp_position=self.ctp_position, randomizer=self.randomizer)
+        }[self.species](self._cf, part=self.ctp_position, randomizer=r)
         assert self._ctp is not None  # to pass typechecker
         self._ctp.generate_ctp()
         notes = self._cf.to_list_notes() + self._ctp.melody.to_list_notes()
