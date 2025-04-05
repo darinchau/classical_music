@@ -27,11 +27,13 @@ from music21.midi.translate import streamToMidiFile
 from mido import MidiFile, MidiTrack, Message
 from numpy.typing import NDArray
 from typing import Literal
+import copy
 
 _PITCH_NAME_REGEX = re.compile(r"([CDEFGAB])(#+|b+)?(-?[0-9]+)")
 PIANO_A0 = 21
 PIANO_C8 = 108
-_MUSIC21_SETUP = False
+
+_music21_setup = False
 
 
 class NotSupportedOnWindows(NotImplementedError):
@@ -48,8 +50,8 @@ def _get_sounddevice():
 
 def _setup():
     from music21 import environment
-    global _MUSIC21_SETUP
-    if _MUSIC21_SETUP:
+    global _music21_setup
+    if _music21_setup:
         return
 
     # Raise a warning if in windows
@@ -60,10 +62,14 @@ def _setup():
     us['musescoreDirectPNGPath'] = '/usr/bin/mscore'
     us['directoryScratch'] = '/tmp'
 
-    _MUSIC21_SETUP = True
+    _music21_setup = True
 
 
-class Audio:
+class MusicRepresentation(ABC):
+    """Base class to all music representations. Currently does nothing."""
+
+
+class Audio(MusicRepresentation):
     """Represents an audio that can be played and saved.
 
     A stripped down version of Audio class from https://github.com/darinchau/AutoMasher
@@ -512,7 +518,36 @@ class Note:
         )
 
 
-class PianoRoll:
+class _Notes(MusicRepresentation):
+    def __init__(self, notes: list[Note], real_time: bool):
+        assert all(note.real_time == real_time for note in notes), f"All notes must be {'real' if real_time else 'notated'} time"
+        self._notes = copy.deepcopy(notes)
+
+    @property
+    def notes(self) -> tuple[Note]:
+        return copy.deepcopy(self._notes)
+
+    def __getitem__(self, index: int) -> Note:
+        return self._notes[index]
+
+    def __iter__(self):
+        return iter(self._notes)
+
+    def __bool__(self):
+        return len(self._notes) > 0
+
+
+class RealTimeNotes(_Notes):
+    def __init__(self, notes: list[Note]):
+        super().__init__(notes, real_time=True)
+
+
+class NotatedTimeNotes(_Notes):
+    def __init__(self, notes: list[Note]):
+        super().__init__(notes, real_time=False)
+
+
+class PianoRoll(MusicRepresentation):
     """A piano roll is defined as a 2D matrix (T, 90) where T is the number of time steps and 88 piano keys + 2 pedals is the feature vectors.
     The roll r[i, j] represents the strength of the jth piano key being pressed at time i.
     By convention, 0-88 is the piano keys, r[:, 88] is the sustain pedal, and r[:, 89] is the soft pedal.
@@ -576,7 +611,7 @@ class NotesPlayer(ABC):
 
     A simple example of this is the default fluid synth player implemented below"""
     @abstractmethod
-    def play(self, notes: list[Note], sample_rate: int = 48000) -> Audio:
+    def play(self, notes: RealTimeNotes, sample_rate: int = 48000) -> Audio:
         raise NotImplementedError
 
 
@@ -586,7 +621,7 @@ class FluidSynthNotesPlayer(NotesPlayer):
     def __init__(self, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2"):
         self._soundfont_path = soundfont_path
 
-    def play(self, notes: list[Note], sample_rate: int = 48000) -> Audio:
+    def play(self, notes: RealTimeNotes, sample_rate: int = 48000) -> Audio:
         """Plays the notes into audio"""
         with tempfile.NamedTemporaryFile(suffix=".mid") as f:
             notes_to_midi(notes, f.name)
@@ -616,9 +651,9 @@ def _is_package_installed(package_name):
     return False
 
 
-def _midi_to_notes_quarter_length(midi_path: str) -> list[Note]:
+def _midi_to_notes_quarter_length(midi_path: str) -> NotatedTimeNotes:
     # Use music21 to convert the midi to notes
-    if not _MUSIC21_SETUP:
+    if not _music21_setup:
         _setup()
     stream = m21.converter.parse(midi_path)
     notes: list[Note] = []
@@ -652,10 +687,10 @@ def _midi_to_notes_quarter_length(midi_path: str) -> list[Note]:
                 # Use some python black magic to ensure the offset is calculated correctly
                 object.__setattr__(note, "offset", offset)
                 notes.append(note)
-    return notes
+    return NotatedTimeNotes(notes)
 
 
-def _midi_to_notes_real_time(midi_path: str) -> list[Note]:
+def _midi_to_notes_real_time(midi_path: str) -> RealTimeNotes:
     mid = mido.MidiFile(midi_path)
     tempo = 500000  # Default tempo (500,000 microseconds per beat)
     ticks_per_beat = mid.ticks_per_beat
@@ -704,7 +739,7 @@ def _midi_to_notes_real_time(midi_path: str) -> list[Note]:
             note = Note.from_midi_number(midi_number=note, duration=duration, offset=start_time, velocity=velocity, real_time=True)
             notes.append(note)
 
-    return notes
+    return RealTimeNotes(notes)
 
 
 def _check_pianoroll_fail_reason(array: NDArray, raise_error: bool = False) -> typing.Optional[str]:
@@ -738,7 +773,7 @@ def _check_pianoroll_fail_reason(array: NDArray, raise_error: bool = False) -> t
     return None
 
 
-def notes_to_real_time(notes: list[Note], tempo: float = 120.) -> list[Note]:
+def notes_to_real_time(notes: NotatedTimeNotes, tempo: float = 120.) -> RealTimeNotes:
     """Converts notes to real time"""
     assert all(not note.real_time for note in notes), "All notes must be timed against quarter length"
     return [Note(
@@ -748,12 +783,12 @@ def notes_to_real_time(notes: list[Note], tempo: float = 120.) -> list[Note]:
         offset=n.offset * 60 / tempo,
         real_time=True,
         velocity=n.velocity
-    ) for n in notes]
+    ) for n in notes.notes]
 
 
 def display_score(obj: m21.base.Music21Object, invert_color: bool = True, skip_display: bool = False):
     """Displays the score. Returns a dictionary where keys are the page numbers and values are the images of the page in np arrays"""
-    if not _MUSIC21_SETUP:
+    if not _music21_setup:
         _setup()
 
     from music21.stream.base import Opus
@@ -805,7 +840,7 @@ def display_score(obj: m21.base.Music21Object, invert_color: bool = True, skip_d
     return pages
 
 
-def midi_to_notes(midi_path: str, real_time: bool = True, normalize: bool = False) -> list[Note]:
+def _midi_to_notes(midi_path: str, real_time: bool = True, normalize: bool = False):
     """Converts a midi file to a list of notes. If real_time is True, then the notes will be timed against real time in seconds.
 
     If normalize is True, then the earliest note will always have an offset of 0."""
@@ -814,18 +849,30 @@ def midi_to_notes(midi_path: str, real_time: bool = True, normalize: bool = Fals
     else:
         notes = _midi_to_notes_quarter_length(midi_path)
     assert all(note.real_time == real_time for note in notes)
-    notes = sorted(notes, key=lambda x: x.offset)
+    notes._notes = sorted(notes._notes, key=lambda x: x.offset)
     if normalize:
-        min_offset = min(note.offset for note in notes)
-        for note in notes:
+        min_offset = min(note.offset for note in notes._notes)
+        for note in notes._notes:
             # Use python black magic - this is safe because the object only has reference here
             object.__setattr__(note, "offset", note.offset - min_offset)
     return notes
 
 
+def midi_to_real_time_notes(midi_path: str) -> RealTimeNotes:
+    notes = _midi_to_notes(midi_path, real_time=True)
+    assert isinstance(notes, RealTimeNotes)
+    return notes
+
+
+def midi_to_notated_time_notes(midi_path: str) -> NotatedTimeNotes:
+    notes = _midi_to_notes(midi_path, real_time=False)
+    assert isinstance(notes, NotatedTimeNotes)
+    return notes
+
+
 def score_to_audio(score: m21.stream.Score, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
     """Inner helper function to convert a music21 score to audio. The score will be consumed."""
-    if not _MUSIC21_SETUP:
+    if not _music21_setup:
         _setup()
     with (
         tempfile.NamedTemporaryFile(suffix=".mid") as f1,
@@ -848,10 +895,9 @@ def midi_to_audio(midi_path: str, sample_rate: int = 44100, soundfont_path: str 
         return Audio.load(f.name)
 
 
-def notes_to_score(notes: list[Note]) -> m21.stream.Score:
+def notes_to_score(notes: NotatedTimeNotes) -> m21.stream.Score:
     """Convert a list of notes to a music21 score. The score is only intended to be played and not for further analysis."""
-    assert all(not note.real_time for note in notes), "All notes must be timed against quarter length"
-    if not _MUSIC21_SETUP:
+    if not _music21_setup:
         _setup()
 
     score = m21.stream.Score()
@@ -894,7 +940,7 @@ def notes_to_score(notes: list[Note]) -> m21.stream.Score:
     return score
 
 
-def notes_to_pianoroll(notes: list[Note], resolution: int = 24, eps: float = 1e-6) -> PianoRoll:
+def notes_to_pianoroll(notes: RealTimeNotes | NotatedTimeNotes, resolution: int = 24, eps: float = 1e-6) -> PianoRoll:
     """Converts a list of notes to a pianoroll. A real-timed list of notes will be converted to a real-timed pianoroll and vice versa."""
     if not notes:
         raise ValueError("Cannot convert an empty list of notes to a pianoroll")
@@ -935,7 +981,7 @@ def notes_to_pianoroll(notes: list[Note], resolution: int = 24, eps: float = 1e-
     return PianoRoll(pianoroll, resolution, notes[0].real_time)
 
 
-def notes_to_midi(notes: list[Note], fpath: str):
+def notes_to_midi(notes: NotatedTimeNotes | RealTimeNotes, fpath: str):
     mid = MidiFile()
     track = MidiTrack()
     mid.tracks.append(track)
@@ -960,7 +1006,7 @@ def notes_to_midi(notes: list[Note], fpath: str):
     mid.save(fpath)
 
 
-def pianoroll_to_notes(pianoroll: PianoRoll) -> list[Note]:
+def pianoroll_to_notes(pianoroll: PianoRoll) -> RealTimeNotes | NotatedTimeNotes:
     """Converts a pianoroll to a list of notes. A list of notes with the same timing property will be returned."""
     _check_pianoroll_fail_reason(pianoroll.pianoroll, raise_error=True)
     array = pianoroll.pianoroll
@@ -983,10 +1029,12 @@ def pianoroll_to_notes(pianoroll: PianoRoll) -> list[Note]:
                 notes.append(note)
             elif array[i, note] > 0 and note not in note_on_dict:
                 note_on_dict[note] = (i, array[i, note])
-    return notes
+    if pianoroll.real_time:
+        return RealTimeNotes(notes)
+    return NotatedTimeNotes(notes)
 
 
-def notes_to_audio(notes: list[Note], player: NotesPlayer | None = None, tempo: float = 120., sample_rate: int = 48000) -> Audio:
+def notes_to_audio(notes: RealTimeNotes | NotatedTimeNotes, player: NotesPlayer | None = None, tempo: float = 120., sample_rate: int = 48000) -> Audio:
     """Turns the Notes into Audio. If the notes are timed in real time then the tempo will be ignored.
     Otherwise the notes will be converted to real time using the tempo provided.
 
