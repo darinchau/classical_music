@@ -523,10 +523,6 @@ class _Notes(MusicRepresentation):
         assert all(note.real_time == real_time for note in notes), f"All notes must be {'real' if real_time else 'notated'} time"
         self._notes = copy.deepcopy(notes)
 
-    @property
-    def notes(self) -> tuple[Note]:
-        return copy.deepcopy(self._notes)
-
     def __getitem__(self, index: int) -> Note:
         return self._notes[index]
 
@@ -541,10 +537,16 @@ class RealTimeNotes(_Notes):
     def __init__(self, notes: list[Note]):
         super().__init__(notes, real_time=True)
 
+    def __add__(self, other: RealTimeNotes) -> RealTimeNotes:
+        return RealTimeNotes(self._notes + other._notes)
+
 
 class NotatedTimeNotes(_Notes):
     def __init__(self, notes: list[Note]):
         super().__init__(notes, real_time=False)
+
+    def __add__(self, other: NotatedTimeNotes) -> NotatedTimeNotes:
+        return NotatedTimeNotes(self._notes + other._notes)
 
 
 class PianoRoll(MusicRepresentation):
@@ -776,14 +778,14 @@ def _check_pianoroll_fail_reason(array: NDArray, raise_error: bool = False) -> t
 def notes_to_real_time(notes: NotatedTimeNotes, tempo: float = 120.) -> RealTimeNotes:
     """Converts notes to real time"""
     assert all(not note.real_time for note in notes), "All notes must be timed against quarter length"
-    return [Note(
+    return RealTimeNotes([Note(
         index=n.index,
         octave=n.octave,
         duration=n.duration * 60 / tempo,
         offset=n.offset * 60 / tempo,
         real_time=True,
         velocity=n.velocity
-    ) for n in notes.notes]
+    ) for n in notes])
 
 
 def display_score(obj: m21.base.Music21Object, invert_color: bool = True, skip_display: bool = False):
@@ -902,7 +904,7 @@ def notes_to_score(notes: NotatedTimeNotes) -> m21.stream.Score:
 
     score = m21.stream.Score()
 
-    notes = sorted(notes, key=lambda x: x.offset)
+    listnotes = sorted(notes._notes, key=lambda x: x.offset)
     heap = []
 
     # This dictionary will store the clef assignments (clef number -> list of events)
@@ -910,7 +912,7 @@ def notes_to_score(notes: NotatedTimeNotes) -> m21.stream.Score:
     clef_ctr = 0
 
     # Iterate through the sorted list of events
-    for note in notes:
+    for note in listnotes:
         end = note.offset + note.duration
         if heap and heap[0][0] <= note.offset:
             _, clef_to_use = heapq.heappop(heap)
@@ -1040,7 +1042,7 @@ def notes_to_audio(notes: RealTimeNotes | NotatedTimeNotes, player: NotesPlayer 
 
     By default, this function uses the fluid synth player. If you want to use a different player, then provide the player object."""
     assert notes and all(note.real_time == notes[0].real_time for note in notes), "All notes must have the same timing property"
-    if not notes[0].real_time:
+    if isinstance(notes, NotatedTimeNotes):
         notes = notes_to_real_time(notes, tempo)
     if player is None:
         player = FluidSynthNotesPlayer()

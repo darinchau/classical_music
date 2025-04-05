@@ -13,7 +13,7 @@ import time
 import typing
 from abc import ABC, abstractmethod
 from itertools import chain
-from ..data import PIANO_A0, PIANO_C8, Note
+from ..data import PIANO_A0, PIANO_C8, Note, NotatedTimeNotes
 from .base import SongGenerator
 
 INFINITY = 1 << 64 - 1  # A big number for the search algorithm
@@ -832,7 +832,7 @@ class Melody:
     def get_end_time(self) -> float:
         raise NotImplementedError
 
-    def to_list_notes(self, start: float = 0.) -> list[Note]:
+    def to_list_notes(self, start: float = 0.) -> NotatedTimeNotes:
         i = 0
         measure = 0
         t = start
@@ -860,7 +860,7 @@ class Melody:
                 i += 1
                 note_duration += 1
             measure += 1
-        return notes
+        return NotatedTimeNotes(notes)
 
 
 class CantusFirmus(Melody):
@@ -1181,6 +1181,7 @@ class Counterpoint(ABC):
 
 class ZeroSpecies(Counterpoint):
     """Returns the cantus firmus only"""
+
     def __init__(self, cf: CantusFirmus, part: PartName, randomizer: random.Random | None = None):
         super(ZeroSpecies, self).__init__(cf, part, randomizer=randomizer)
         self.melody.set_rhythm(cf.rhythm)
@@ -1206,6 +1207,7 @@ class ZeroSpecies(Counterpoint):
     def _possible_notes(self) -> list[list[int]]:
         poss: list[list[int]] = [[-1] for _ in self.melody.rhythm]
         return poss
+
 
 class FirstSpecies(Counterpoint):
     def __init__(self, cf: CantusFirmus, part: PartName, randomizer: random.Random | None = None):
@@ -1625,7 +1627,7 @@ class CounterpointGenerator(SongGenerator):
         self._cf: CantusFirmus | None = None
         self._ctp: Counterpoint | None = None
 
-    def generate(self) -> list[Note]:
+    def generate(self) -> NotatedTimeNotes:
         r = self.get_randomizer()
         self._cf = CantusFirmus(
             self.key,
@@ -1642,6 +1644,7 @@ class CounterpointGenerator(SongGenerator):
             "fifth": FifthSpecies
         }[self.species](self._cf, part=self.ctp_position, randomizer=r)
         assert self._ctp is not None  # to pass typechecker
+        assert isinstance(self._ctp, Counterpoint)
         self._ctp.generate_ctp()
         notes = self._cf.to_list_notes() + self._ctp.melody.to_list_notes()
         return notes

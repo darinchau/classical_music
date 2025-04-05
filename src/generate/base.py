@@ -1,6 +1,6 @@
 import random
 from abc import ABC, abstractmethod
-from ..data import Note
+from ..data import NotatedTimeNotes
 
 
 class SongGenerator(ABC):
@@ -8,7 +8,7 @@ class SongGenerator(ABC):
         self._seed = seed
 
     @abstractmethod
-    def generate(self) -> list[Note]:
+    def generate(self) -> NotatedTimeNotes:
         pass
 
     def get_randomizer(self) -> random.Random:

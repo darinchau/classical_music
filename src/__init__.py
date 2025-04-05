@@ -7,7 +7,8 @@ from .data import (
     notes_to_pianoroll,
     notes_to_score,
     midi_to_audio,
-    midi_to_notes,
+    midi_to_notated_time_notes,
+    midi_to_real_time_notes,
     notes_to_audio,
     notes_to_real_time,
 )
