@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import copy
 import heapq
 import librosa
 import logging
@@ -24,10 +25,16 @@ from fractions import Fraction
 from functools import lru_cache, reduce, total_ordering
 from math import pi as PI
 from music21.midi.translate import streamToMidiFile
+from music21 import expressions, style, stream
+from music21.stream.base import Opus
+from music21.ipython21 import converters as ip21_converters
+from music21.converter.subConverters import ConverterMusicXML
+from music21 import defaults
+from music21.converter import museScore
 from mido import MidiFile, MidiTrack, Message
 from numpy.typing import NDArray
 from typing import Literal
-import copy
+
 
 _PITCH_NAME_REGEX = re.compile(r"([CDEFGAB])(#+|b+)?(-?[0-9]+)")
 PIANO_A0 = 21
@@ -653,14 +660,8 @@ def _is_package_installed(package_name):
     return False
 
 
-def _midi_to_notes_quarter_length(midi_path: str) -> NotatedTimeNotes:
-    # Use music21 to convert the midi to notes
-    if not _music21_setup:
-        _setup()
-    stream = m21.converter.parse(midi_path)
+def score_to_notes(stream: m21.stream.Score) -> NotatedTimeNotes:
     notes: list[Note] = []
-    if not isinstance(stream, m21.stream.Score):
-        raise ValueError(f"Midi file must contain a score, found {type(stream)}")
     for el in stream.recurse().getElementsByClass((
         m21.note.Note,
         m21.chord.Chord,
@@ -690,6 +691,16 @@ def _midi_to_notes_quarter_length(midi_path: str) -> NotatedTimeNotes:
                 object.__setattr__(note, "offset", offset)
                 notes.append(note)
     return NotatedTimeNotes(notes)
+
+
+def _midi_to_notes_quarter_length(midi_path: str) -> NotatedTimeNotes:
+    # Use music21 to convert the midi to notes
+    if not _music21_setup:
+        _setup()
+    stream = m21.converter.parse(midi_path)
+    if not isinstance(stream, m21.stream.Score):
+        raise ValueError(f"Midi file must contain a score, found {type(stream)}")
+    return score_to_notes(stream)
 
 
 def _midi_to_notes_real_time(midi_path: str) -> RealTimeNotes:
