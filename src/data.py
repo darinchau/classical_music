@@ -31,6 +31,7 @@ from music21.ipython21 import converters as ip21_converters
 from music21.converter.subConverters import ConverterMusicXML
 from music21 import defaults
 from music21.converter import museScore
+from music21.stream.base import Score, Stream, Part, Measure
 from mido import MidiFile, MidiTrack, Message
 from numpy.typing import NDArray
 from typing import Literal
@@ -641,7 +642,7 @@ def _is_package_installed(package_name):
     return False
 
 
-def score_to_notes(stream: m21.stream.Score) -> NotatedTimeNotes:
+def score_to_notes(stream: Stream) -> NotatedTimeNotes:
     notes: list[Note] = []
     for el in stream.recurse().getElementsByClass((
         m21.note.Note,
@@ -679,7 +680,7 @@ def _midi_to_notes_quarter_length(midi_path: str) -> NotatedTimeNotes:
     if not _music21_setup:
         _setup()
     stream = m21.converter.parse(midi_path)
-    if not isinstance(stream, m21.stream.Score):
+    if not isinstance(stream, Score):
         raise ValueError(f"Midi file must contain a score, found {type(stream)}")
     return score_to_notes(stream)
 
@@ -864,7 +865,7 @@ def midi_to_notated_time_notes(midi_path: str) -> NotatedTimeNotes:
     return notes
 
 
-def score_to_audio(score: m21.stream.Score, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
+def score_to_audio(score: Score, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
     """Inner helper function to convert a music21 score to audio. The score will be consumed."""
     if not _music21_setup:
         _setup()
@@ -889,12 +890,12 @@ def midi_to_audio(midi_path: str, sample_rate: int = 44100, soundfont_path: str 
         return Audio.load(f.name)
 
 
-def notes_to_score(notes: NotatedTimeNotes) -> m21.stream.Score:
+def notes_to_score(notes: NotatedTimeNotes) -> Score:
     """Convert a list of notes to a music21 score. The score is only intended to be played and not for further analysis."""
     if not _music21_setup:
         _setup()
 
-    score = m21.stream.Score()
+    score = Score()
 
     listnotes = sorted(notes._notes, key=lambda x: x.offset)
     heap = []
@@ -918,8 +919,8 @@ def notes_to_score(notes: NotatedTimeNotes) -> m21.stream.Score:
             assignments[clef_to_use] = [note]
         heapq.heappush(heap, (end, clef_to_use))
 
-    measures = [m21.stream.Measure() for _ in range(len(assignments))]
-    parts = [m21.stream.Part() for _ in range(len(assignments))]
+    measures = [Measure() for _ in range(len(assignments))]
+    parts = [Part() for _ in range(len(assignments))]
     for i, (measure, part) in enumerate(zip(measures, parts)):
         for note in assignments[i]:
             m21note = m21.note.Note(

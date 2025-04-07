@@ -4,55 +4,47 @@ import music21 as m21
 import json
 from tqdm import tqdm
 from music21 import corpus
+from music21.stream.base import Score
 from .base import SongGenerator
 from ..data import _setup, Note, NotatedTimeNotes, score_to_notes
 from functools import lru_cache
 
 
 @lru_cache(maxsize=1)
-def get_chorale_scores() -> list[m21.stream.Score]:
+def get_chorale_scores(verbose=False) -> list[Score]:
     _setup()
     idxs_path = "./resources/valid_chorale_indices.json"
     candidate_chorales = corpus.chorales.ChoraleList().byBudapest
 
-    # if os.path.exists(idxs_path):
-    #     with open(idxs_path, "r") as f:
-    #         valid_idxs = json.load(f)
-    #     scores: list[m21.stream.Score] = []
-    #     for i in tqdm(valid_idxs):
-    #         score = corpus.parse(f"bwv{candidate_chorales[i]['bwv']}")
-    #         assert isinstance(score, m21.stream.Score)
-    #         scores.append(score)
-    #     print(f"Loaded {len(scores)} chorales")
-    #     return scores
-
-    scores: list[m21.stream.Score] = []
+    scores: list[Score] = []
     valid_idxs = []
-    for i, b in tqdm(candidate_chorales.items(), total=len(candidate_chorales), desc="Loading chorales..."):
+    for i, b in tqdm(candidate_chorales.items(), total=len(candidate_chorales), desc="Loading chorales...", disable=not verbose):
         score = corpus.parse(f"bwv{b['bwv']}")
         if not score:
             continue
-        if not isinstance(score, m21.stream.Score):
+        if not isinstance(score, Score):
             continue
         if not len(score.parts) == 4:
             continue
         scores.append(score)
         valid_idxs.append(i)
-
-    # with open(idxs_path, "w") as f:
-    #     json.dump(sorted(valid_idxs), f)
-
-    print(f"Loaded {len(scores)} chorales.")
+    if verbose:
+        print(f"Loaded {len(scores)} chorales.")
     return scores
 
 
 class ChoraleGenerator(SongGenerator):
-    def __init__(self, seed: int | None = None):
+    def __init__(self, seed: int | None = None, verbose: bool = False):
         super().__init__(seed)
-        self._chorales = get_chorale_scores()
+        self._chorales = get_chorale_scores(verbose=verbose)
 
-    def generate(self) -> NotatedTimeNotes:
+    def generate_parts(self) -> dict[str, NotatedTimeNotes]:
         _setup()
         randomizer = self.get_randomizer()
         chorale = randomizer.choice(self._chorales)
-        return score_to_notes(chorale)
+        return {
+            "soprano": score_to_notes(chorale.parts[0]),
+            "alto": score_to_notes(chorale.parts[1]),
+            "tenor": score_to_notes(chorale.parts[2]),
+            "bass": score_to_notes(chorale.parts[3]),
+        }

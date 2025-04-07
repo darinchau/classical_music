@@ -1615,6 +1615,7 @@ class CounterpointGenerator(SongGenerator):
         bar_length: int = 2,
         seed: int | None = None
     ):
+        """Generates a counterpoint with the given parameters."""
         super(CounterpointGenerator, self).__init__(seed)
         self.key: KeyName = key
         self.scale_name: ScaleName = scale_name
@@ -1627,7 +1628,7 @@ class CounterpointGenerator(SongGenerator):
         self._cf: CantusFirmus | None = None
         self._ctp: Counterpoint | None = None
 
-    def generate(self) -> NotatedTimeNotes:
+    def generate_parts(self) -> dict[str, NotatedTimeNotes]:
         r = self.get_randomizer()
         self._cf = CantusFirmus(
             self.key,
@@ -1646,8 +1647,10 @@ class CounterpointGenerator(SongGenerator):
         assert self._ctp is not None  # to pass typechecker
         assert isinstance(self._ctp, Counterpoint)
         self._ctp.generate_ctp()
-        notes = self._cf.to_list_notes() + self._ctp.melody.to_list_notes()
-        return notes
+        return {
+            "cf": self._cf.to_list_notes(),
+            "ctp": self._ctp.melody.to_list_notes()
+        }
 
     @property
     def cf(self) -> CantusFirmus:
