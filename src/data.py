@@ -35,6 +35,9 @@ from mido import MidiFile, MidiTrack, Message
 from numpy.typing import NDArray
 from typing import Literal
 
+if typing.TYPE_CHECKING:
+    from .player import NotesPlayer
+
 
 _PITCH_NAME_REGEX = re.compile(r"([CDEFGAB])(#+|b+)?(-?[0-9]+)")
 PIANO_A0 = 21
@@ -612,29 +615,7 @@ class PianoRoll(MusicRepresentation):
             )
 
 
-class NotesPlayer(ABC):
-    """This will be used to play notes into audio. We have no way of checking this
-    but ideally the notes being played has timing aligned exactly with the audio
-    This should only accept notes that are real-timed
-    In the future we could hook this to a VST
 
-    A simple example of this is the default fluid synth player implemented below"""
-    @abstractmethod
-    def play(self, notes: RealTimeNotes, sample_rate: int = 48000) -> Audio:
-        raise NotImplementedError
-
-
-class FluidSynthNotesPlayer(NotesPlayer):
-    """Uses the fluidsynth library to play notes into audio"""
-
-    def __init__(self, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2"):
-        self._soundfont_path = soundfont_path
-
-    def play(self, notes: RealTimeNotes, sample_rate: int = 48000) -> Audio:
-        """Plays the notes into audio"""
-        with tempfile.NamedTemporaryFile(suffix=".mid") as f:
-            notes_to_midi(notes, f.name)
-            return midi_to_audio(f.name, sample_rate=sample_rate, soundfont_path=self._soundfont_path)
 
 
 def _step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], alter: int) -> int:
@@ -1053,6 +1034,7 @@ def notes_to_audio(notes: RealTimeNotes | NotatedTimeNotes, player: NotesPlayer 
 
     By default, this function uses the fluid synth player. If you want to use a different player, then provide the player object."""
     assert notes and all(note.real_time == notes[0].real_time for note in notes), "All notes must have the same timing property"
+    from .player import FluidSynthNotesPlayer, NotesPlayer
     if isinstance(notes, NotatedTimeNotes):
         notes = notes_to_real_time(notes, tempo)
     if player is None:
