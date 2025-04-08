@@ -39,12 +39,17 @@ class ChoraleGenerator(SongGenerator):
         self._chorales = get_chorale_scores(verbose=verbose)
 
     def generate_parts(self) -> dict[str, NotatedTimeNotes]:
-        _setup()
-        randomizer = self.get_randomizer()
-        chorale = randomizer.choice(self._chorales)
+        chorale = self.get_chorale()
         return {
             "soprano": score_to_notes(chorale.parts[0]),
             "alto": score_to_notes(chorale.parts[1]),
             "tenor": score_to_notes(chorale.parts[2]),
             "bass": score_to_notes(chorale.parts[3]),
         }
+
+    def get_chorale(self) -> Score:
+        """Returns a chorale from the corpus by index"""
+        _setup()
+        randomizer = self.get_randomizer()
+        chorale = randomizer.choice(self._chorales)
+        return chorale
