@@ -616,9 +616,6 @@ class PianoRoll(MusicRepresentation):
             )
 
 
-
-
-
 def _step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], alter: int) -> int:
     return {"C": 0, "D": 2, "E": 4, "F": -1, "G": 1, "A": 3, "B": 5}[step] + 7 * alter
 
