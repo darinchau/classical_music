@@ -1,10 +1,11 @@
 from dataclasses import dataclass
 from collections import defaultdict
 import itertools
-from ..data import Note, NotatedTimeNotes
+from ..reps import Note, NotatedTimeNotes
 
 _NoteCoords = tuple[float, int]
 TEC = tuple[frozenset[_NoteCoords], set[_NoteCoords]]
+
 
 def cosiatec(notes: NotatedTimeNotes):
     # Convert notes to points (offset, MIDI_pitch)
@@ -28,12 +29,14 @@ def cosiatec(notes: NotatedTimeNotes):
     compressed: list[tuple[list[Note], set[_NoteCoords]]] = []
     for pattern, vectors in tecs:
         pattern_notes = [note for note in notes
-                        if (note.offset, note.midi_number) in pattern]
+                         if (note.offset, note.midi_number) in pattern]
         compressed.append((pattern_notes, vectors))
 
     return compressed
 
 # Helper functions for COSIATEC implementation
+
+
 def get_best_tec(points_set: set[_NoteCoords]):
     points = sorted(points_set)
     best = None
@@ -52,6 +55,7 @@ def get_best_tec(points_set: set[_NoteCoords]):
 
     return best
 
+
 def find_mtps(points: list[_NoteCoords], point_set: set[_NoteCoords]):
     vectors: dict[_NoteCoords, list[_NoteCoords]] = defaultdict(list)
     for i, p in enumerate(points):
@@ -68,6 +72,7 @@ def find_mtps(points: list[_NoteCoords], point_set: set[_NoteCoords]):
 
     return list({mtp for mtp in mtps if len(mtp) > 1})
 
+
 def compute_tec(mtp: frozenset[_NoteCoords], points: set[_NoteCoords]) -> TEC:
     translators: set[_NoteCoords] = set()
     p0 = min(mtp)
@@ -80,6 +85,7 @@ def compute_tec(mtp: frozenset[_NoteCoords], points: set[_NoteCoords]) -> TEC:
 
     translators.discard((0, 0))
     return (frozenset(mtp), translators)
+
 
 def compute_conjugate(tec: TEC) -> TEC:
     pattern, vectors = tec
@@ -99,6 +105,7 @@ def compute_conjugate(tec: TEC) -> TEC:
 
     return (frozenset(new_pattern), new_translators)
 
+
 def remove_redundant(tec: TEC) -> TEC:
     pattern, vectors = tec
     if not vectors:
@@ -115,6 +122,7 @@ def remove_redundant(tec: TEC) -> TEC:
 
     return (pattern, set(essential))
 
+
 def is_better(a: TEC, b: TEC | None):
     if not b:
         return True
@@ -124,6 +132,7 @@ def is_better(a: TEC, b: TEC | None):
     if cr_a != cr_b:
         return cr_a > cr_b
     return len(a[0]) > len(b[0])
+
 
 def covered_set(tec: TEC):
     if not tec:

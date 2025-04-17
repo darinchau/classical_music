@@ -42,7 +42,6 @@ from .base import SymbolicMusic
 from .audio import Audio
 
 if typing.TYPE_CHECKING:
-    from ..player import NotesPlayer
     from .notes import Note, RealTimeNotes, NotatedTimeNotes
 
 
