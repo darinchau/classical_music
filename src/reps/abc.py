@@ -57,9 +57,10 @@ class ABCNotation(SymbolicMusic):
             abc_path = os.path.join(tmpdir, "temp.abc")
             with open(abc_path, 'w') as f:
                 f.write(self.abc_string)
-            xml_path = run_abc2xml([abc_path], output_directory=tmpdir)[0]
+            _, err = run_abc2xml([abc_path], output_directory=tmpdir)
+            xml_path = os.path.join(tmpdir, os.path.splitext(abc_path)[0] + ".xml")
             if not os.path.exists(xml_path):
-                raise ValueError(f"Failed to convert ABC to XML: {xml_path}")
+                raise ValueError(f"Failed to convert ABC to XML ({xml_path}): {err}")
             return XmlFile(xml_path).save_to_midi(path)
 
 
@@ -108,6 +109,7 @@ def interleave_abc(abc: str) -> list[str]:
                     line = line.replace(match, '')
         abc_lines[i] = line
     interleaved_abc: list[str] = rotate_abc(abc_lines)
+    interleaved_abc = [line.strip() for line in interleaved_abc if line.strip() != '']
     return interleaved_abc
 
 
@@ -223,9 +225,9 @@ def run_abc2xml(input_files: list[str], output_directory='', skip_tunes=0, max_t
     - stdout (str): Standard output from the script.
     - stderr (str): Standard error output, if any.
     """
-    abc2xml_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "abc", "xml2abc.py"))
+    abc2xml_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "abc", "abc2xml.py"))
     if not os.path.exists(abc2xml_path):
-        raise FileNotFoundError(f"xml2abc.py not found at {abc2xml_path}")
+        raise FileNotFoundError(f"abc2xml.py not found at {abc2xml_path}")
 
     cmd = [sys.executable, abc2xml_path]
 
@@ -249,11 +251,6 @@ def run_abc2xml(input_files: list[str], output_directory='', skip_tunes=0, max_t
     if force_string_allocation:
         cmd.append('-f')
 
-    # Add file arguments
     cmd.extend(input_files)
-
-    # Execute the command using subprocess
     result = subprocess.run(cmd, capture_output=True, text=True)
-
-    # Return the output and errors
     return result.stdout, result.stderr
