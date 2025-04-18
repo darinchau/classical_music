@@ -33,9 +33,17 @@ _MAYBE_SUCCESSFUL = re.compile(r"written with [0-9]+ voices")
 class ABCNotation(SymbolicMusic):
     """Implements the ABC notation for music where every line is separate by a new-line character"""
 
-    def __init__(self, abc_string: str):
-        self.abc_string = abc_string
+    def __init__(self, abc: list[str]):
+        self._abc_string = abc
         self._validate_abc()
+
+    @property
+    def abc_string(self) -> str:
+        """
+        Get the ABC notation as a string.
+        :return: ABC notation string.
+        """
+        return "\n".join([line.strip() for line in self._abc_string])
 
     def _validate_abc(self):
         # TODO add validation
@@ -48,9 +56,9 @@ class ABCNotation(SymbolicMusic):
         :param path: Path to the XML file.
         :return: An instance of ABCNotation.
         """
-        abc_string = xml2abc(path)
-        abc_string = interleave_abc(abc_string)
-        return cls("\n".join(abc_string))
+        abc = xml2abc(path)
+        abc = interleave_abc(abc)
+        return cls(abc)
 
     def save_to_midi(self, path: str):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -62,6 +70,14 @@ class ABCNotation(SymbolicMusic):
             if not os.path.exists(xml_path):
                 raise ValueError(f"Failed to convert ABC to XML ({xml_path}): {err}")
             return XmlFile(xml_path).save_to_midi(path)
+
+    def write(self, path: str):
+        """
+        Write the ABC notation to a file.
+        :param path: Path to the output file.
+        """
+        with open(path, 'w') as f:
+            f.write(self.abc_string)
 
 
 def interleave_abc(abc: str) -> list[str]:
