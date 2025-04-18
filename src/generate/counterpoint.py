@@ -13,7 +13,8 @@ import time
 import typing
 from abc import ABC, abstractmethod
 from itertools import chain
-from ..data import PIANO_A0, PIANO_C8, Note, NotatedTimeNotes
+from ..reps import Note, NotatedTimeNotes
+from ..util import PIANO_A0, PIANO_C8
 from .base import SongGenerator
 
 INFINITY = 1 << 64 - 1  # A big number for the search algorithm

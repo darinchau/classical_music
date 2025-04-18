@@ -1,3 +1,4 @@
+import sys
 import os
 
 
@@ -43,6 +44,16 @@ def _require_music21():
             raise ImportError("Music21 is not installed. Please install it using `pip install music21`.")
         _setup()
         _music21_setup = True
+
+
+class _shutup:
+    def __enter__(self):
+        self._original_stdout = sys.stdout
+        sys.stdout = open(os.devnull, 'w')
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout.close()
+        sys.stdout = self._original_stdout
 
 
 NATURAL = "♮"

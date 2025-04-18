@@ -45,6 +45,34 @@ if typing.TYPE_CHECKING:
     from .notes import Note, RealTimeNotes, NotatedTimeNotes
 
 
+class XmlFile(SymbolicMusic):
+    def __init__(self, path: str):
+        super().__init__()
+        self._path = path
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    @classmethod
+    def load_from_xml(cls, path: str):
+        """Loads a MusicXML file."""
+        assert os.path.exists(path), f"File {path} does not exist"
+        return cls(path)
+
+    def to_score(self) -> Music21Stream:
+        """Loads a MusicXML file and returns a music21 stream."""
+        _require_music21()
+        stream = m21.converter.parse(self.path)
+        if not isinstance(stream, Stream):
+            raise ValueError(f"Stream must be a music21 stream, found {type(stream)}")
+        return Music21Stream(stream)
+
+    def save_to_midi(self, path: str):
+        """Saves the MusicXML file to a MIDI file."""
+        return self.to_score().save_to_midi(path)
+
+
 class Midifile(SymbolicMusic):
     def __init__(self, path: str):
         super().__init__()
@@ -58,19 +86,10 @@ class Midifile(SymbolicMusic):
     def load_from_xml(cls, path: str):
         """Loads a MIDI file from a MusicXML file."""
         _require_music21()
-        stream = m21.converter.parse(path)
-        if not isinstance(stream, Stream):
-            raise ValueError(f"Stream must be a music21 stream, found {type(stream)}")
-        if not os.path.exists("./.cache"):
-            os.makedirs("./.cache")
-        path = os.path.join("./.cache", os.path.basename(path) + ".mid")
-        midifile = streamToMidiFile(stream)
-        midifile.open(path, "wb")
-        try:
-            midifile.write()
-        finally:
-            midifile.close()
-        return cls(path)
+        with tempfile.TemporaryDirectory(delete=False) as tmpdir:
+            p = os.path.join(tmpdir, os.path.basename(path) + ".mid")
+            XmlFile.load_from_xml(path).to_score().save_to_midi(p)
+        return cls(p)
 
     def save_to_midi(self, path: str):
         """Saves the MIDI file to a new path."""
@@ -135,9 +154,9 @@ class Midifile(SymbolicMusic):
 
         return RealTimeNotes(notes)
 
-    def to_audio(self, midi_path: str, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
+    def to_audio(self, sample_rate: int = 44100, soundfont_path: str = "~/.fluidsynth/default_sound_font.sf2") -> Audio:
         with tempfile.NamedTemporaryFile(suffix=".wav") as f:
-            _convert_midi_to_wav(midi_path, f.name, soundfont_path, sample_rate)
+            _convert_midi_to_wav(self.path, f.name, soundfont_path, sample_rate)
             return Audio.load(f.name)
 
 
@@ -217,16 +236,9 @@ class Music21Stream(SymbolicMusic):
         _require_music21()
         with (
             tempfile.NamedTemporaryFile(suffix=".mid") as f1,
-            tempfile.NamedTemporaryFile(suffix=".wav") as f2
         ):
-            file = streamToMidiFile(self._stream, addStartDelay=True)
-            file.open(f1.name, "wb")
-            try:
-                file.write()
-            finally:
-                file.close()
-            _convert_midi_to_wav(f1.name, f2.name, soundfont_path, sample_rate)
-            return Audio.load(f2.name)
+            self.save_to_midi(f1.name)
+            return Midifile(f1.name).to_audio(sample_rate, soundfont_path)
 
 
 def _convert_midi_to_wav(input_path: str, output_path: str, soundfont_path="~/.fluidsynth/default_sound_font.sf2", sample_rate=44100, verbose=False):

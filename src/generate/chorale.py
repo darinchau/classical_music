@@ -4,15 +4,16 @@ import music21 as m21
 import json
 from tqdm import tqdm
 from music21 import corpus
-from music21.stream.base import Score
+from music21.stream.base import Score, Part, Stream
 from .base import SongGenerator
-from ..data import _setup, Note, NotatedTimeNotes, score_to_notes
+from ..reps import Note, NotatedTimeNotes, Music21Stream
+from ..util import _require_music21
 from functools import lru_cache
 
 
 @lru_cache(maxsize=1)
 def get_chorale_scores(verbose=False) -> list[Score]:
-    _setup()
+    _require_music21()
     idxs_path = "./resources/valid_chorale_indices.json"
     candidate_chorales = corpus.chorales.ChoraleList().byBudapest
 
@@ -49,7 +50,12 @@ class ChoraleGenerator(SongGenerator):
 
     def get_chorale(self) -> Score:
         """Returns a chorale from the corpus by index"""
-        _setup()
+        _require_music21()
         randomizer = self.get_randomizer()
         chorale = randomizer.choice(self._chorales)
         return chorale
+
+
+def score_to_notes(score: Stream) -> NotatedTimeNotes:
+    """Converts a music21 score to a NotatedTimeNotes object"""
+    return Music21Stream(score).to_notated_time_notes()

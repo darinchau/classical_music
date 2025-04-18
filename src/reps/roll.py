@@ -85,8 +85,7 @@ class RealTimePianoRoll(_PianoRoll):
 
     def save_to_midi(self, path: str):
         """Saves the pianoroll to a MIDI file"""
-        notes = self.to_real_time_notes()
-        notes.save_to_midi(path)
+        return self.to_real_time_notes().save_to_midi(path)
 
 
 class NotatedPianoRoll(_PianoRoll):
@@ -108,8 +107,7 @@ class NotatedPianoRoll(_PianoRoll):
 
     def save_to_midi(self, path: str):
         """Saves the pianoroll to a MIDI file"""
-        notes = self.to_notated_notes()
-        notes.save_to_midi(path)
+        return self.to_notated_notes().save_to_midi(path)
 
 
 def _check_pianoroll_fail_reason(array: NDArray, raise_error: bool = False) -> typing.Optional[str]:

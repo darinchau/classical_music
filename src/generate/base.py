@@ -1,12 +1,11 @@
 import random
 from abc import ABC, abstractmethod
-from ..data import NotatedTimeNotes, Note
+from ..reps import NotatedTimeNotes, Note
 
 
 class SongGenerator(ABC):
     def __init__(self, seed: int | None = None):
         self._seed = seed
-
 
     def generate(self) -> NotatedTimeNotes:
         """Generates a song, returning a NotatedTimeNotes object."""
@@ -17,7 +16,7 @@ class SongGenerator(ABC):
         return NotatedTimeNotes(notes=notes)
 
     @abstractmethod
-    def generate_parts( self) -> dict[str, NotatedTimeNotes]:
+    def generate_parts(self) -> dict[str, NotatedTimeNotes]:
         """Generates multiple parts of the song, returning a dict of NotatedTimeNotes objects."""
         raise NotImplementedError
 
