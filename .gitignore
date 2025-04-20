@@ -67,4 +67,6 @@ nohup.out
 /resources/*
 *.mid
 *.midi
-!/resources/goldberg.mid # Test file
+!/resources/goldberg.mid
+!/resources/goldberg.abc
+!/resources/goldberg.mxl
