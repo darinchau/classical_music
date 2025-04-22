@@ -6,7 +6,10 @@ import os
 import subprocess
 import tempfile
 import csv
+import re
 from ..reps import SymbolicMusic, Midifile
+
+_PATTERN = re.compile(r"[A-Z]{1,2}-[0-9]{1,3} (.*?):(.*)")
 
 
 def _require_java():
@@ -72,4 +75,37 @@ def extract_features(music: SymbolicMusic) -> dict:
             temp_path = os.path.join(temp_dir, 'temp.mid')
             music.save_to_midi(temp_path)
             features = _run_jsymbolic(temp_path)
+    if "" in features:
+        del features[""]
     return features
+
+
+def get_jsymbolic_docs():
+    with open(os.path.join(
+        os.path.dirname(__file__),
+        "..", "..", "resources", "jsymbolic_explanation.txt"
+    )) as f:
+        explanation = f.read()
+    return explanation
+
+
+def get_explanations():
+    """Returns the Jsymbolic documentation as a key-value dictionary."""
+    explanation_lines = get_jsymbolic_docs().splitlines()
+    explanation_lines = [line.strip() for line in explanation_lines if line.strip() != ""]
+    replacements = [
+        (" ", "_"),
+        ("–", "-"),
+    ]
+    explanation_dict = {}
+    for line in explanation_lines:
+        match = _PATTERN.match(line)
+        if match:
+            feature_name = (
+                match.group(1).strip()
+            )
+            for old, new in replacements:
+                feature_name = feature_name.replace(old, new)
+            explanation = match.group(2).strip()
+            explanation_dict[feature_name] = explanation
+    return explanation_dict
