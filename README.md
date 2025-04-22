@@ -1,4 +1,4 @@
-Little music experiment
+A base framework for symbolic music manipulation. Will be constantly updating
 
 Tested on Ubuntu + Python 3.12
 
