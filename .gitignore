@@ -67,6 +67,5 @@ nohup.out
 /resources/*
 *.mid
 *.midi
-!/resources/goldberg.mid
-!/resources/goldberg.abc
-!/resources/goldberg.mxl
+!/resources/goldberg*
+!/resources/jsymbolic_explanation.txt

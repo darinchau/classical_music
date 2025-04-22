@@ -80,6 +80,7 @@ class Midifile(SymbolicMusic):
 
     @property
     def path(self) -> str:
+        """Returns the path to the MIDI file."""
         return self._path
 
     @classmethod

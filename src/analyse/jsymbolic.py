@@ -6,7 +6,7 @@ import os
 import subprocess
 import tempfile
 import csv
-from ..reps import SymbolicMusic
+from ..reps import SymbolicMusic, Midifile
 
 
 def _require_java():
@@ -23,7 +23,8 @@ def _require_jsymbolic():
     """
     Check if jsymbolic is installed and available in the system PATH.
     """
-    jsymbolic_path = os.path.join(os.path.dirname(__file__), 'resources', 'jSymbolic_2_2_user', 'jSymbolic.jar')
+    jsymbolic_path = os.path.join(os.path.dirname(__file__), "..", "..", 'resources', 'jSymbolic_2_2_user', 'jSymbolic2.jar')
+    jsymbolic_path = os.path.abspath(jsymbolic_path)
     if not os.path.exists(jsymbolic_path):
         raise RuntimeError("jsymbolic is not installed. Please download it from https://sourceforge.net/projects/jmir/files/jSymbolic/jSymbolic%202.2/jSymbolic_2_2_user.zip/download and place it in the resources directory.")
     return jsymbolic_path
@@ -50,7 +51,7 @@ def _run_jsymbolic(input_file: str):
             os.path.abspath(output_def),
         ]
         try:
-            subprocess.run(cmd, check=True)
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"jsymbolic failed with error: {e.stderr.decode()}") from e
 
@@ -60,3 +61,15 @@ def _run_jsymbolic(input_file: str):
             if single_row_dict is None:
                 raise RuntimeError("No data found in the CSV output file.")
     return single_row_dict
+
+
+def extract_features(music: SymbolicMusic) -> dict:
+    from ..reps import Midifile
+    if isinstance(music, Midifile):
+        features = _run_jsymbolic(music.path)
+    else:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = os.path.join(temp_dir, 'temp.mid')
+            music.save_to_midi(temp_path)
+            features = _run_jsymbolic(temp_path)
+    return features
