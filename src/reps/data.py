@@ -20,7 +20,7 @@ import tempfile
 import threading
 import typing
 import warnings
-from ..util import NATURAL, is_ipython, _require_music21
+from ..util import NATURAL, is_ipython, _require_music21, NotSupportedOnWindows
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
