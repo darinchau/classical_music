@@ -12,9 +12,6 @@ from ..util import is_ipython, PIANO_A0, PIANO_C8
 from .base import SymbolicMusic
 import typing
 
-if typing.TYPE_CHECKING:
-    from .roll import PianoRoll
-
 _PITCH_NAME_REGEX = re.compile(r"([CDEFGAB])(#+|b+)?(-?[0-9]+)")
 
 
@@ -220,7 +217,7 @@ class _Notes(SymbolicMusic):
 
     def to_pianoroll(self, resolution: int = 24, eps: float = 1e-6) -> PianoRoll:
         """Converts the notes to a pianoroll. A real-timed list of notes will be converted to a real-timed pianoroll and vice versa."""
-        return notes_to_pianoroll(self, resolution, eps)
+        raise NotImplementedError
 
     def save_to_midi(self, path: str):
         mid = MidiFile()
@@ -254,6 +251,10 @@ class RealTimeNotes(_Notes):
     def __add__(self, other: RealTimeNotes) -> RealTimeNotes:
         return RealTimeNotes(self._notes + other._notes)
 
+    def to_pianoroll(self, resolution: int = 24, eps: float = 1e-6):
+        """Converts the notes to a real-time pianoroll."""
+        return notes_to_pianoroll_rt(self, resolution, eps)
+
     @classmethod
     def load_from_xml(cls, path: str) -> RealTimeNotes:
         """Loads a RealTimeNotes from a music21 XML file."""
@@ -267,6 +268,10 @@ class NotatedTimeNotes(_Notes):
 
     def __add__(self, other: NotatedTimeNotes) -> NotatedTimeNotes:
         return NotatedTimeNotes(self._notes + other._notes)
+
+    def to_pianoroll(self, resolution: int = 24, eps: float = 1e-6):
+        """Converts the notes to a notated-time pianoroll."""
+        return notes_to_pianoroll_nt(self, resolution, eps)
 
     @classmethod
     def load_from_xml(cls, path: str) -> NotatedTimeNotes:
@@ -291,9 +296,9 @@ def _step_alter_to_lof_index(step: Literal["C", "D", "E", "F", "G", "A", "B"], a
     return {"C": 0, "D": 2, "E": 4, "F": -1, "G": 1, "A": 3, "B": 5}[step] + 7 * alter
 
 
-def notes_to_pianoroll(notes: _Notes, resolution: int = 24, eps: float = 1e-6) -> PianoRoll:
+def notes_to_pianoroll_rt(notes: RealTimeNotes, resolution: int = 24, eps: float = 1e-6):
     """Converts a list of notes to a pianoroll. A real-timed list of notes will be converted to a real-timed pianoroll and vice versa."""
-    from .roll import PianoRoll
+    from .roll import RealTimePianoRoll
 
     if not notes:
         raise ValueError("Cannot convert an empty list of notes to a pianoroll")
@@ -301,7 +306,7 @@ def notes_to_pianoroll(notes: _Notes, resolution: int = 24, eps: float = 1e-6) -
 
     max_duration = max(note.offset + note.duration for note in notes)
     max_duration = int(max_duration * resolution) + 1
-    pianoroll = PianoRoll.new_zero_array(max_duration)
+    pianoroll = RealTimePianoRoll.new_zero_array(max_duration)
     notes_dict: dict[int, list[tuple[int, int, int]]] = {}
     for note in notes:
         start = int(note.offset * resolution)
@@ -331,4 +336,47 @@ def notes_to_pianoroll(notes: _Notes, resolution: int = 24, eps: float = 1e-6) -
                 pianoroll[min(ns[i][0], ns[i + 1][0]):max(ns[i][1], ns[i + 1][1]), k - PIANO_A0] = max(ns[i][2], ns[i + 1][2]) / 127
         pianoroll[ns[-1][0]:ns[-1][1], k - PIANO_A0] = ns[-1][2] / 127
 
-    return PianoRoll(pianoroll, resolution, notes[0].real_time)
+    return RealTimePianoRoll(pianoroll, resolution, notes[0].real_time)
+
+
+def notes_to_pianoroll_nt(notes: NotatedTimeNotes, resolution: int = 24, eps: float = 1e-6):
+    """Converts a list of notes to a pianoroll. A real-timed list of notes will be converted to a real-timed pianoroll and vice versa."""
+    from .roll import NotatedPianoRoll
+
+    if not notes:
+        raise ValueError("Cannot convert an empty list of notes to a pianoroll")
+    assert all(note.real_time == notes[0].real_time for note in notes), "All notes must have the same timing property"
+
+    max_duration = max(note.offset + note.duration for note in notes)
+    max_duration = int(max_duration * resolution) + 1
+    pianoroll = NotatedPianoRoll.new_zero_array(max_duration)
+    notes_dict: dict[int, list[tuple[int, int, int]]] = {}
+    for note in notes:
+        start = int(note.offset * resolution)
+        end = int((note.offset + note.duration) * resolution)
+        if start == end and note.duration > 0:
+            required_resolution = int(1 / note.duration)
+            raise ValueError(f"Unable to resolve piano roll - try increase the resolution to at least {required_resolution}")
+        if note.midi_number not in notes_dict:
+            notes_dict[note.midi_number] = []
+        notes_dict[note.midi_number].append((start, end, note.velocity))
+
+    # Check for overlap first, then assign the notes
+    for k, ns in notes_dict.items():
+        ns = sorted(ns, key=lambda x: x[0])
+        for i in range(len(ns) - 1):
+            if ns[i][1] < ns[i + 1][0]:
+                # Case 1: No overlap
+                pianoroll[ns[i][0]:ns[i][1], k - PIANO_A0] = ns[i][2] / 127
+            elif abs(ns[i][1] - ns[i + 1][0]) < eps:
+                # Case 2: End of note is start of next note - try minus one on end of this note
+                if ns[i][1] == ns[i][0] + 1:
+                    raise ValueError("Unable to resolve piano roll - try increase the resolution")
+                pianoroll[ns[i][0]:ns[i][1] - 1, k - PIANO_A0] = ns[i][2] / 127
+            else:
+                # Case 3: Overlap
+                # Use the union of two intervals and the larger velocity
+                pianoroll[min(ns[i][0], ns[i + 1][0]):max(ns[i][1], ns[i + 1][1]), k - PIANO_A0] = max(ns[i][2], ns[i + 1][2]) / 127
+        pianoroll[ns[-1][0]:ns[-1][1], k - PIANO_A0] = ns[-1][2] / 127
+
+    return NotatedPianoRoll(pianoroll, resolution, notes[0].real_time)
