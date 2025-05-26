@@ -197,7 +197,7 @@ class Note:
 class _Notes(SymbolicMusic):
     def __init__(self, notes: list[Note], real_time: bool):
         assert all(note.real_time == real_time for note in notes), f"All notes must be {'real' if real_time else 'notated'} time"
-        self._notes = sorted(notes, key=lambda x: x.offset)
+        self._notes = sorted(notes, key=lambda x: (x.offset, x.duration, x.midi_number))
 
     def __getitem__(self, index: int) -> Note:
         return self._notes[index]
@@ -207,6 +207,9 @@ class _Notes(SymbolicMusic):
 
     def __bool__(self):
         return len(self._notes) > 0
+    
+    def __len__(self):
+        return len(self._notes)
 
     def normalize(self):
         min_offset = min(note.offset for note in self._notes)
